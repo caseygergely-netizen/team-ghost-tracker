@@ -1,0 +1,77 @@
+import React, { useState } from 'react';
+import { Settings, Save } from 'lucide-react';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+
+const PlayerAdmin = ({ players }) => {
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  
+  const startEdit = (player) => { setEditingId(player.id); setEditForm({ ...player }); };
+  
+  const saveEdit = async () => {
+      const cleanData = {
+          peakScore: parseFloat(editForm.peakScore) || 0,
+          tierScore: parseFloat(editForm.tierScore) || 0,
+          lifetimeEarnings: parseFloat(editForm.lifetimeEarnings) || 0,
+          lifetimeHours: parseFloat(editForm.lifetimeHours) || 0,
+          heldCash: parseFloat(editForm.heldCash) || 0,
+          pinnedBankroll: parseFloat(editForm.pinnedBankroll) || 0,
+          currentTier: parseInt(editForm.currentTier) || 0,
+          investorBalance: parseFloat(editForm.investorBalance) || 0
+      };
+      try {
+          await updateDoc(doc(db, "players", editingId), cleanData);
+          setEditingId(null);
+      } catch(e) { alert("Error saving stats"); }
+  };
+
+  return (
+    <div className="bg-gray-800 p-6 rounded-xl border border-gray-700">
+      <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><Settings className="text-gray-400" /> Admin Settings</h2>
+      
+      <div className="space-y-4">
+          {players.map(p => (
+              <div key={p.id} className="bg-gray-900 p-4 rounded border border-gray-700">
+                  {editingId === p.id ? (
+                      <div className="space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* EDIT FIELDS */}
+                              {p.role === 'investor' ? (
+                                  <>
+                                    <div className="col-span-2"><label className="text-xs text-purple-400 block mb-1">Investor Balance</label><input type="number" className="w-full bg-gray-800 border border-purple-500 rounded px-2 py-2 text-white" value={editForm.investorBalance} onChange={e => setEditForm({...editForm, investorBalance: e.target.value})} /></div>
+                                    <div><label className="text-xs text-gray-500 block mb-1">Lifetime Earnings</label><input type="number" className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-2 text-white" value={editForm.lifetimeEarnings} onChange={e => setEditForm({...editForm, lifetimeEarnings: e.target.value})} /></div>
+                                  </>
+                              ) : (
+                                  <>
+                                    <div><label className="text-xs text-gray-500 block mb-1">Tier Score</label><input type="number" className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-2 text-white" value={editForm.tierScore} onChange={e => setEditForm({...editForm, tierScore: e.target.value})} /></div>
+                                    <div><label className="text-xs text-gray-500 block mb-1">Earnings</label><input type="number" className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-2 text-white" value={editForm.lifetimeEarnings} onChange={e => setEditForm({...editForm, lifetimeEarnings: e.target.value})} /></div>
+                                    <div><label className="text-xs text-yellow-500/80 block mb-1">Peak Score</label><input type="number" className="w-full bg-gray-800 border border-yellow-500/50 rounded px-2 py-2 text-white" value={editForm.peakScore} onChange={e => setEditForm({...editForm, peakScore: e.target.value})} /></div>
+                                    <div><label className="text-xs text-gray-500 block mb-1">Hours</label><input type="number" className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-2 text-white" value={editForm.lifetimeHours} onChange={e => setEditForm({...editForm, lifetimeHours: e.target.value})} /></div>
+                                    <div><label className="text-xs text-emerald-500/80 block mb-1">Held Cash</label><input type="number" className="w-full bg-gray-800 border border-emerald-500/50 rounded px-2 py-2 text-white" value={editForm.heldCash} onChange={e => setEditForm({...editForm, heldCash: e.target.value})} /></div>
+                                    <div><label className="text-xs text-blue-400/80 block mb-1">Pinned</label><input type="number" className="w-full bg-gray-800 border border-blue-500/50 rounded px-2 py-2 text-white" value={editForm.pinnedBankroll} onChange={e => setEditForm({...editForm, pinnedBankroll: e.target.value})} /></div>
+                                  </>
+                              )}
+                          </div>
+                          <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
+                              <button onClick={() => setEditingId(null)} className="px-4 py-2 text-sm bg-gray-700 rounded hover:bg-gray-600">Cancel</button>
+                              <button onClick={saveEdit} className="px-4 py-2 text-sm bg-emerald-600 rounded flex items-center gap-1 font-bold hover:bg-emerald-500"><Save size={16} /> Save</button>
+                          </div>
+                      </div>
+                  ) : (
+                      <div className="flex justify-between items-center">
+                          <div>
+                              <h3 className="font-bold text-lg">{p.name}</h3>
+                              <div className="text-xs text-gray-400 mt-1">{p.role === 'investor' ? 'Investor' : `Tier Score: $${(p.tierScore || 0).toLocaleString()}`}</div>
+                          </div>
+                          <button onClick={() => startEdit(p)} className="text-emerald-400 text-sm font-bold border border-emerald-900 bg-emerald-900/20 px-3 py-1 rounded hover:bg-emerald-900/40">Edit</button>
+                      </div>
+                  )}
+              </div>
+          ))}
+      </div>
+    </div>
+  );
+};
+
+export default PlayerAdmin;
