@@ -1,5 +1,6 @@
 {
   "name": "team-ghost-tracker",
+  "homepage": "https://caseygergely-netizen.github.io/team-ghost-tracker",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
