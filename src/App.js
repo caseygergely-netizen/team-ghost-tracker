@@ -5,12 +5,14 @@ import {
   serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch 
 } from 'firebase/firestore';
 import { 
-  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft 
+  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft
 } from 'lucide-react';
 
 // --- IMPORT COMPONENTS ---
 import LoginView from './components/LoginView';
-import Dashboard from './components/Dashboard';
+import PapiDashboard from './components/PapiDashboard';
+import OliverDashboard from './components/OliverDashboard';
+import PlayerDashboard from './components/PlayerDashboard';
 import SessionLogger from './components/SessionLogger';
 import TeamPayLogger from './components/TeamPayLogger';
 import MachineLogger from './components/MachineLogger';
@@ -68,6 +70,11 @@ const App = () => {
     return () => { unsubWithdrawals(); unsubPending(); };
   }, [currentUser]);
 
+  // Sort Players for Login View (By Tier Score)
+  const sortedPlayers = useMemo(() => {
+    return [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0));
+  }, [players]);
+
   const casinoOptions = useMemo(() => {
     const counts = {};
     sessions.forEach(s => {
@@ -96,14 +103,14 @@ const App = () => {
   };
 
   const handleEndShift = () => {
-      // Open the logger, pass active shift data
       setEditingSession(null); 
-      setView('logSession');
+      setView('logSession'); // This opens the SessionLogger
   };
 
   // --- LOGIC HANDLERS ---
   const handleSessionSubmit = async (data) => {
     const { totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, sessionTimestamp, sessionId, isLegacy, papiBacked } = data;
+    // ... (Keep existing math logic)
     if (sessionId) await revertSessionMath(sessionId);
     const updates = [];
 
@@ -141,7 +148,6 @@ const App = () => {
       if (sessionId) { await updateDoc(doc(db, "sessions", sessionId), sessionData); showNotification("Session Updated!"); } 
       else { await addDoc(collection(db, "sessions"), sessionData); showNotification(isLegacy ? "Historical Entry Saved" : "Shift Logged!"); }
       
-      // If we just ended a shift, clear the timer
       if (activeShift) setActiveShift(null);
       
       setEditingSession(null); setView('dashboard');
@@ -149,6 +155,7 @@ const App = () => {
   };
 
   const revertSessionMath = async (sessionId) => {
+    // ... (Keep existing math logic)
     const sessionDoc = sessions.find(s => s.id === sessionId);
     if (!sessionDoc || sessionDoc.isLegacy) return;
     if (sessionDoc.papiBacked) {
@@ -179,6 +186,7 @@ const App = () => {
   const handleDeleteSession = async (sessionId) => { if (window.confirm("Delete this session?")) { try { await revertSessionMath(sessionId); await deleteDoc(doc(db, "sessions", sessionId)); showNotification("Session Deleted"); } catch(e) { showNotification("Error deleting"); } } };
   
   const handleTeamPay = async (data) => {
+    // ... (Keep existing team pay logic)
     const { winnerId, amount } = data;
     const otherShares = round5(amount * 0.035);
     const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -232,17 +240,17 @@ const App = () => {
       showNotification(`Transferred $${amount}`);
   };
 
-  const handlePapiSettle = async () => {
-      if (!currentUser || currentUser.role !== 'investor') return;
-      const balance = currentUser.investorBalance || 0;
-      if (balance <= 0) return alert("Nothing to settle.");
-      if (window.confirm(`Request transfer of $${balance} from Oliver?`)) {
-          await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: balance, method: "Investor Payout", timestamp: serverTimestamp() });
-          await updateDoc(doc(db, "players", currentUser.id), { investorBalance: 0 });
-          showNotification("Settlement Requested.");
-      }
+  // NEW: OLIVER -> PAPI TRANSFER LOGIC
+  const handleTransferToPapi = async (amount) => {
+      if (!currentUser) return;
+      const papiDoc = players.find(p => p.role === 'investor');
+      if (!papiDoc) return alert("No Investor found.");
+      await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) - amount });
+      await addDoc(collection(db, "withdrawals"), { playerId: papiDoc.id, amount: amount, method: "Transfer from Oliver", timestamp: serverTimestamp() });
+      showNotification(`Transferred $${amount} to Papi.`);
   };
 
+  // ... (Keep existing logs logic)
   const handleMachineSubmit = async (data) => { await addDoc(collection(db, "machineLogs"), { ...data, loggedBy: currentUser.name, timestamp: serverTimestamp() }); showNotification("Data Saved"); setView('dashboard'); };
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
   const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal? Stats won't revert.")) await deleteDoc(doc(db, "withdrawals", id)); };
@@ -275,27 +283,82 @@ const App = () => {
       try { await batch.commit(); showNotification(`Imported ${count}.`); } catch(e) { alert("Import Failed"); }
   };
 
-  if (view === 'login') return <LoginView players={players} sessions={sessions} onLogin={handleLogin} />;
+  // --- RENDER HELPERS ---
+  const renderDashboard = () => {
+    // 1. PAPI VIEW
+    if (currentUser.role === 'investor') {
+      return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
+    }
+    // 2. OLIVER VIEW
+    if (currentUser.role === 'backer') {
+      return (
+        <OliverDashboard 
+          currentUser={currentUser}
+          players={players}
+          isShiftActive={!!activeShift}
+          onStartShift={handleStartShift}
+          onTransferToPapi={handleTransferToPapi}
+          onTeamPay={() => setView('teamPay')}
+          onLogMachine={() => setView('logMachine')}
+        />
+      );
+    }
+    // 3. STANDARD PLAYER VIEW
+    return (
+      <PlayerDashboard 
+        currentUser={currentUser}
+        isShiftActive={!!activeShift}
+        onStartShift={handleStartShift}
+        onTeamPay={() => setView('teamPay')}
+        onLogMachine={() => setView('logMachine')}
+      />
+    );
+  };
+
+  if (view === 'login') return <LoginView players={sortedPlayers} sessions={sessions} onLogin={handleLogin} />;
   if (pendingActions.length > 0) return <PendingActionModal action={pendingActions[0]} onConfirm={handleAcknowledgeAction} />;
   
   if (view === 'spectator' && viewingPlayer) {
       return (
         <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
             <header className="flex items-center mb-8 border-b border-gray-700 pb-4 gap-4"><button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full hover:bg-gray-700"><ArrowLeft size={20}/></button><h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1></header>
-            <main className="max-w-4xl mx-auto"><Dashboard currentUser={currentUser} viewingUser={viewingPlayer} players={players} sessions={sessions} withdrawals={[]} setView={()=>{}} onCashout={()=>{}} onTransfer={()=>{}} onEditSession={()=>{}} onDeleteSession={()=>{}} onDeleteWithdrawal={()=>{}} onPapiSettle={()=>{}} /></main>
+            <main className="max-w-4xl mx-auto"><div className="text-center text-gray-500">Spectator Mode Active</div></main>
         </div>
       );
   }
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
+      {/* HEADER */}
       <header className="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
-        <div><h1 className="text-xl font-bold text-emerald-400 tracking-wider">TEAM GHOST</h1><p className="text-xs text-gray-400">Player: <span className="text-white font-bold">{currentUser?.name}</span></p></div>
-        <div className="flex gap-2"><button onClick={() => setView('dashboard')} className={`p-2 rounded ${view === 'dashboard' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Activity size={20}/></button><button onClick={() => setView('machineAnalytics')} className={`p-2 rounded ${view === 'machineAnalytics' ? 'bg-purple-600' : 'bg-gray-800'}`}><BarChart2 size={20}/></button><button onClick={() => setView('teamRoster')} className={`p-2 rounded ${view === 'teamRoster' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Users size={20}/></button><button onClick={() => setView('settings')} className={`p-2 rounded ${view === 'settings' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Settings size={20}/></button><button onClick={handleLogout} className="p-2 rounded bg-red-900/50 text-red-400 ml-2"><LogOut size={20}/></button></div>
+        <div>
+          <h1 className="text-xl font-bold text-emerald-400 tracking-wider">TEAM GHOST</h1>
+          <p className="text-xs text-gray-400">Player: <span className="text-white font-bold">{currentUser?.name}</span></p>
+        </div>
+        
+        {/* NAV BUTTONS */}
+        <div className="flex gap-2">
+          <button onClick={() => setView('dashboard')} className={`p-2 rounded ${view === 'dashboard' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Activity size={20}/></button>
+          
+          {/* Hide extra tabs from Papi */}
+          {currentUser.role !== 'investor' && (
+            <>
+              <button onClick={() => setView('machineAnalytics')} className={`p-2 rounded ${view === 'machineAnalytics' ? 'bg-purple-600' : 'bg-gray-800'}`}><BarChart2 size={20}/></button>
+              <button onClick={() => setView('teamRoster')} className={`p-2 rounded ${view === 'teamRoster' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Users size={20}/></button>
+              <button onClick={() => setView('settings')} className={`p-2 rounded ${view === 'settings' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Settings size={20}/></button>
+            </>
+          )}
+          
+          <button onClick={handleLogout} className="p-2 rounded bg-red-900/50 text-red-400 ml-2"><LogOut size={20}/></button>
+        </div>
       </header>
+      
       {notification && <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded shadow-lg animate-bounce z-50">{notification}</div>}
+      
+      {/* MAIN CONTENT */}
       <main className="max-w-4xl mx-auto">
-        {view === 'dashboard' && <Dashboard currentUser={currentUser} players={players} sessions={sessions} withdrawals={withdrawals} setView={setView} onCashout={handleSettleUp} onTransfer={handleTransferToBacker} onEditSession={(s)=>{setEditingSession(s); setView('logSession');}} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} onPapiSettle={handlePapiSettle} onStartShift={handleStartShift} isShiftActive={!!activeShift} />}
+        {view === 'dashboard' && renderDashboard()}
+        
         {view === 'teamRoster' && <TeamRoster players={players} sessions={sessions} onViewPlayer={handleViewPlayer} />}
         {view === 'logSession' && <SessionLogger players={players} currentUser={currentUser} casinoOptions={casinoOptions} games={games} initialData={editingSession} activeShiftData={activeShift} onSubmit={handleSessionSubmit} onCancel={() => { setEditingSession(null); setView('dashboard'); }} />}
         {view === 'teamPay' && <TeamPayLogger players={players} onSubmit={handleTeamPay} onCancel={() => setView('dashboard')} />}
@@ -304,6 +367,8 @@ const App = () => {
         {view === 'playInfo' && <PlayInfo games={games} onAdd={handleGameSubmit} onEdit={handleGameSubmit} onDelete={handleDeleteGame} />}
         {view === 'settings' && <PlayerAdmin players={players} onImport={handleBulkImport} onClear={handleClearLogs} onClearImports={handleClearImports} />}
       </main>
+      
+      {/* ACTIVE SHIFT FOOTER */}
       {activeShift && <ActiveShift shift={activeShift} onEnd={handleEndShift} />}
     </div>
   );
