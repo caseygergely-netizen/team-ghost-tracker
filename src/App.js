@@ -22,9 +22,8 @@ import PlayerAdmin from './components/PlayerAdmin';
 import PendingActionModal from './components/PendingActionModal';
 import PlayInfo from './components/PlayInfo';
 import ActiveShift from './components/ActiveShift';
-import StartSessionModal from './components/StartSessionModal'; // NEW IMPORT
+import StartSessionModal from './components/StartSessionModal';
 
-// --- IMPORT UTILITIES ---
 import { round5, getTierDetails, parseMoney } from './utils';
 
 const App = () => {
@@ -40,7 +39,7 @@ const App = () => {
   const [notification, setNotification] = useState(null);
   const [pendingActions, setPendingActions] = useState([]);
   const [editingSession, setEditingSession] = useState(null);
-  const [showStartModal, setShowStartModal] = useState(false); // NEW STATE
+  const [showStartModal, setShowStartModal] = useState(false);
   
   const [activeShift, setActiveShift] = useState(() => {
       const saved = localStorage.getItem('activeShift');
@@ -94,9 +93,8 @@ const App = () => {
   const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
   const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
 
-  // --- ACTIVE SHIFT ---
   const handleStartShiftClick = () => {
-    setShowStartModal(true); // Open the Modal instead of prompt
+    setShowStartModal(true);
   };
 
   const handleConfirmStartShift = (casino) => {
@@ -107,7 +105,7 @@ const App = () => {
 
   const handleEndShift = () => {
       setEditingSession(null); 
-      setView('logSession');
+      setView('endShift'); // NEW VIEW FOR SHIFT END
   };
 
   // --- LOGIC ---
@@ -150,7 +148,9 @@ const App = () => {
       if (sessionId) { await updateDoc(doc(db, "sessions", sessionId), sessionData); showNotification("Session Updated!"); } 
       else { await addDoc(collection(db, "sessions"), sessionData); showNotification(isLegacy ? "Historical Entry Saved" : "Shift Logged!"); }
       
-      if (activeShift) setActiveShift(null);
+      // If we were ending a shift, clear it now
+      if (view === 'endShift' || activeShift) setActiveShift(null);
+      
       setEditingSession(null); setView('dashboard');
     } catch (e) { showNotification("Error logging session"); }
   };
@@ -291,7 +291,7 @@ const App = () => {
           currentUser={currentUser}
           players={players}
           isShiftActive={!!activeShift}
-          onStartShift={handleStartShiftClick} // Update to use Modal click
+          onStartShift={handleStartShiftClick}
           onEndShift={handleEndShift}
           onTransferToPapi={handleTransferToPapi}
           onTeamPay={() => setView('teamPay')}
@@ -306,7 +306,7 @@ const App = () => {
         sessions={sessions}
         withdrawals={withdrawals}
         isShiftActive={!!activeShift}
-        onStartShift={handleStartShiftClick} // Update to use Modal click
+        onStartShift={handleStartShiftClick}
         onTeamPay={() => setView('teamPay')}
         onLogMachine={() => setView('logMachine')}
         onCashout={handleSettleUp}
@@ -326,7 +326,6 @@ const App = () => {
       return (
         <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
             <header className="flex items-center mb-8 border-b border-gray-700 pb-4 gap-4"><button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full hover:bg-gray-700"><ArrowLeft size={20}/></button><h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1></header>
-            {/* Reusing PlayerDashboard in Read-Only Mode could work, but for now simple fallback */}
              <div className="p-4 bg-gray-800 rounded text-center">Spectator Mode (Stats Only)</div>
         </div>
       );
@@ -361,9 +360,23 @@ const App = () => {
       {/* MAIN CONTENT */}
       <main className="max-w-4xl mx-auto">
         {view === 'dashboard' && renderDashboard()}
-        
         {view === 'teamRoster' && <TeamRoster players={players} sessions={sessions} onViewPlayer={handleViewPlayer} />}
-        {view === 'logSession' && <SessionLogger players={players} currentUser={currentUser} casinoOptions={casinoOptions} games={games} initialData={editingSession} activeShiftData={activeShift} onSubmit={handleSessionSubmit} onCancel={() => { setEditingSession(null); setView('dashboard'); }} />}
+        
+        {/* --- SESSION LOGGER: Handles Edit, End Shift, and Team Log --- */}
+        {(view === 'logSession' || view === 'endShift' || view === 'logTeamSession') && (
+           <SessionLogger 
+              players={players} 
+              currentUser={currentUser} 
+              casinoOptions={casinoOptions} 
+              games={games} 
+              initialData={editingSession} 
+              activeShiftData={activeShift} 
+              mode={(view === 'endShift' || (editingSession && !editingSession.playersInvolved)) ? 'shift' : 'team'}
+              onSubmit={handleSessionSubmit} 
+              onCancel={() => { setEditingSession(null); setView('dashboard'); }} 
+            />
+        )}
+
         {view === 'teamPay' && <TeamPayLogger players={players} onSubmit={handleTeamPay} onCancel={() => setView('dashboard')} />}
         {view === 'logMachine' && <MachineLogger onSubmit={handleMachineSubmit} onCancel={() => setView('dashboard')} />}
         {view === 'machineAnalytics' && <MachineAnalytics logs={machineLogs} onDeleteLog={handleDeleteLog} />}

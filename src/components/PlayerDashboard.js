@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { 
-  CheckCircle, ArrowRightLeft, TrendingUp, DollarSign, Database, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2 
+  CheckCircle, ArrowRightLeft, TrendingUp, DollarSign, Database, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users 
 } from 'lucide-react';
 import { getTierDetails, round5 } from '../utils';
 
@@ -55,7 +55,7 @@ const PlayerDashboard = ({
   return (
     <div className="space-y-6">
       
-      {/* --- NEW: START SESSION BUTTON SECTION --- */}
+      {/* --- START SESSION BUTTON --- */}
       <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 text-center shadow-lg">
         {!isShiftActive ? (
           <button onClick={onStartShift} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white text-xl font-bold py-4 px-12 rounded-full shadow-lg transform transition hover:scale-105 flex items-center justify-center gap-3 mx-auto">
@@ -68,7 +68,7 @@ const PlayerDashboard = ({
         )}
       </div>
 
-      {/* --- OLD: RICH STATS CARD --- */}
+      {/* --- RICH STATS CARD --- */}
       <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 p-6 rounded-xl shadow-lg relative overflow-hidden">
         <div className="flex justify-between items-start relative z-10">
             <div>
@@ -109,31 +109,20 @@ const PlayerDashboard = ({
         </div>
       </div>
 
-      {/* --- RECENT WITHDRAWALS --- */}
-      {withdrawals && withdrawals.length > 0 && (
-          <div className="bg-gray-800/50 p-3 rounded border border-gray-700">
-              <h4 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1"><History size={12}/> Recent Withdrawals</h4>
-              <div className="space-y-1">
-                  {withdrawals.map(w => (
-                      <div key={w.id} className="flex justify-between text-xs text-gray-300">
-                          <span>{w.method}</span>
-                          <div className="flex items-center gap-2">
-                              <span className="text-emerald-400 font-bold">-${w.amount}</span>
-                              <button onClick={() => onDeleteWithdrawal(w.id)} className="text-gray-600 hover:text-red-400"><Trash2 size={10}/></button>
-                          </div>
-                      </div>
-                  ))}
-              </div>
-          </div>
-      )}
-
       {/* --- QUICK ACTIONS --- */}
-      <div className="grid grid-cols-2 gap-4">
-        <button onClick={onTeamPay} className="bg-gray-800 hover:bg-gray-700 p-6 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        {/* NEW BUTTON: LOG TEAM PLAY */}
+        <button onClick={() => setView('logTeamSession')} className="bg-blue-900/20 hover:bg-blue-900/40 p-4 rounded-xl border border-blue-500/50 flex flex-col items-center gap-2 transition group">
+          <Users size={24} className="text-blue-400 group-hover:text-blue-300" />
+          <span className="font-bold text-blue-100">Log Team Play</span>
+        </button>
+
+        <button onClick={onTeamPay} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
           <DollarSign size={24} className="text-yellow-500" />
           <span className="font-bold text-gray-300">Log Team Pay</span>
         </button>
-        <button onClick={onLogMachine} className="bg-gray-800 hover:bg-gray-700 p-6 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
+
+        <button onClick={onLogMachine} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
           <BarChart2 size={24} className="text-purple-500" />
           <span className="font-bold text-gray-300">Machine Log</span>
         </button>
@@ -153,7 +142,7 @@ const PlayerDashboard = ({
         </ResponsiveContainer>
       </div>
 
-      {/* --- HISTORY TABLE --- */}
+      {/* --- HISTORY --- */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
         <div className="p-4 border-b border-gray-700 font-bold flex items-center gap-2"><Activity size={18}/> Session History</div>
         <div className="max-h-80 overflow-y-auto">
