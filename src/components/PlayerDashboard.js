@@ -110,21 +110,29 @@ const PlayerDashboard = ({
       </div>
 
       {/* --- QUICK ACTIONS --- */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        {/* NEW BUTTON: LOG TEAM PLAY */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* LOG TEAM PLAY */}
         <button onClick={() => setView('logTeamSession')} className="bg-blue-900/20 hover:bg-blue-900/40 p-4 rounded-xl border border-blue-500/50 flex flex-col items-center gap-2 transition group">
           <Users size={24} className="text-blue-400 group-hover:text-blue-300" />
           <span className="font-bold text-blue-100">Log Team Play</span>
         </button>
 
+        {/* LOG TEAM PAY */}
         <button onClick={onTeamPay} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
           <DollarSign size={24} className="text-yellow-500" />
           <span className="font-bold text-gray-300">Log Team Pay</span>
         </button>
 
+        {/* LOG MACHINE */}
         <button onClick={onLogMachine} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
           <BarChart2 size={24} className="text-purple-500" />
           <span className="font-bold text-gray-300">Machine Log</span>
+        </button>
+
+        {/* NEW: PLAY INFO BUTTON */}
+        <button onClick={() => setView('playInfo')} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
+          <BookOpen size={24} className="text-cyan-400" />
+          <span className="font-bold text-gray-300">Play Info</span>
         </button>
       </div>
 

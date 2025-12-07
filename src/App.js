@@ -296,6 +296,7 @@ const App = () => {
           onTransferToPapi={handleTransferToPapi}
           onTeamPay={() => setView('teamPay')}
           onLogMachine={() => setView('logMachine')}
+          onLogTeamSession={() => setView('logTeamSession')}
         />
       );
     }

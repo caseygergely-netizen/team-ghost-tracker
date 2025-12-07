@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
-import { DollarSign, Play, BarChart2 } from 'lucide-react';
+import { DollarSign, Play, BarChart2, Users } from 'lucide-react';
 
 const OliverDashboard = ({ 
   players, isShiftActive, 
   onStartShift, onTransferToPapi, 
-  onTeamPay, onLogMachine 
+  onTeamPay, onLogMachine, onLogTeamSession // <-- Added Prop
 }) => {
   const [transferAmount, setTransferAmount] = useState('');
   
-  // Calculate Papi's Balance for display (so Oliver knows what he owes)
+  // Calculate Papi's Balance
   const papi = players.find(p => p.role === 'investor');
   const papiBalance = papi ? papi.investorBalance : 0;
 
@@ -68,10 +68,17 @@ const OliverDashboard = ({
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 gap-4">
+          {/* NEW BUTTON */}
+          <button onClick={onLogTeamSession} className="bg-blue-900/20 hover:bg-blue-900/40 border border-blue-500/50 p-4 rounded-xl flex items-center justify-between group transition-all">
+            <span className="text-blue-100 font-bold">Log Team Play</span>
+            <Users className="text-blue-400 group-hover:text-blue-300" />
+          </button>
+
           <button onClick={onTeamPay} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex items-center justify-between group">
             <span className="text-gray-300 font-bold group-hover:text-white">Log Team Pay</span>
             <DollarSign className="text-yellow-500" />
           </button>
+          
           <button onClick={onLogMachine} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex items-center justify-between group">
             <span className="text-gray-300 font-bold group-hover:text-white">Log Machine Data</span>
             <BarChart2 className="text-purple-500" />
