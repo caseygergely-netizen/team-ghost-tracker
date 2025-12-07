@@ -22,6 +22,7 @@ import PlayerAdmin from './components/PlayerAdmin';
 import PendingActionModal from './components/PendingActionModal';
 import PlayInfo from './components/PlayInfo';
 import ActiveShift from './components/ActiveShift';
+import StartSessionModal from './components/StartSessionModal'; // NEW IMPORT
 
 // --- IMPORT UTILITIES ---
 import { round5, getTierDetails, parseMoney } from './utils';
@@ -39,8 +40,8 @@ const App = () => {
   const [notification, setNotification] = useState(null);
   const [pendingActions, setPendingActions] = useState([]);
   const [editingSession, setEditingSession] = useState(null);
+  const [showStartModal, setShowStartModal] = useState(false); // NEW STATE
   
-  // NEW: ACTIVE SHIFT STATE
   const [activeShift, setActiveShift] = useState(() => {
       const saved = localStorage.getItem('activeShift');
       return saved ? JSON.parse(saved) : null;
@@ -70,7 +71,6 @@ const App = () => {
     return () => { unsubWithdrawals(); unsubPending(); };
   }, [currentUser]);
 
-  // Sort Players for Login View (By Tier Score)
   const sortedPlayers = useMemo(() => {
     return [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0));
   }, [players]);
@@ -87,30 +87,32 @@ const App = () => {
     return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   }, [sessions, currentUser]);
 
-  // --- NAVIGATION HANDLERS ---
+  // --- HANDLERS ---
   const handleLogin = (player) => { setCurrentUser(player); setView('dashboard'); };
   const handleLogout = () => { setCurrentUser(null); setViewingPlayer(null); setView('login'); setPendingActions([]); };
   const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
   const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
   const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
 
-  // --- ACTIVE SHIFT HANDLERS ---
-  const handleStartShift = () => {
-      const casino = prompt("Enter Casino Name:");
-      if (!casino) return;
-      setActiveShift({ casino, startTime: new Date().toISOString() });
-      showNotification("Shift Started! Timer running.");
+  // --- ACTIVE SHIFT ---
+  const handleStartShiftClick = () => {
+    setShowStartModal(true); // Open the Modal instead of prompt
+  };
+
+  const handleConfirmStartShift = (casino) => {
+    setActiveShift({ casino, startTime: new Date().toISOString() });
+    setShowStartModal(false);
+    showNotification("Shift Started! Timer running.");
   };
 
   const handleEndShift = () => {
       setEditingSession(null); 
-      setView('logSession'); // This opens the SessionLogger
+      setView('logSession');
   };
 
-  // --- LOGIC HANDLERS ---
+  // --- LOGIC ---
   const handleSessionSubmit = async (data) => {
     const { totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, sessionTimestamp, sessionId, isLegacy, papiBacked } = data;
-    // ... (Keep existing math logic)
     if (sessionId) await revertSessionMath(sessionId);
     const updates = [];
 
@@ -149,13 +151,11 @@ const App = () => {
       else { await addDoc(collection(db, "sessions"), sessionData); showNotification(isLegacy ? "Historical Entry Saved" : "Shift Logged!"); }
       
       if (activeShift) setActiveShift(null);
-      
       setEditingSession(null); setView('dashboard');
     } catch (e) { showNotification("Error logging session"); }
   };
 
   const revertSessionMath = async (sessionId) => {
-    // ... (Keep existing math logic)
     const sessionDoc = sessions.find(s => s.id === sessionId);
     if (!sessionDoc || sessionDoc.isLegacy) return;
     if (sessionDoc.papiBacked) {
@@ -186,7 +186,6 @@ const App = () => {
   const handleDeleteSession = async (sessionId) => { if (window.confirm("Delete this session?")) { try { await revertSessionMath(sessionId); await deleteDoc(doc(db, "sessions", sessionId)); showNotification("Session Deleted"); } catch(e) { showNotification("Error deleting"); } } };
   
   const handleTeamPay = async (data) => {
-    // ... (Keep existing team pay logic)
     const { winnerId, amount } = data;
     const otherShares = round5(amount * 0.035);
     const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -240,7 +239,6 @@ const App = () => {
       showNotification(`Transferred $${amount}`);
   };
 
-  // NEW: OLIVER -> PAPI TRANSFER LOGIC
   const handleTransferToPapi = async (amount) => {
       if (!currentUser) return;
       const papiDoc = players.find(p => p.role === 'investor');
@@ -250,7 +248,6 @@ const App = () => {
       showNotification(`Transferred $${amount} to Papi.`);
   };
 
-  // ... (Keep existing logs logic)
   const handleMachineSubmit = async (data) => { await addDoc(collection(db, "machineLogs"), { ...data, loggedBy: currentUser.name, timestamp: serverTimestamp() }); showNotification("Data Saved"); setView('dashboard'); };
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
   const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal? Stats won't revert.")) await deleteDoc(doc(db, "withdrawals", id)); };
@@ -285,32 +282,39 @@ const App = () => {
 
   // --- RENDER HELPERS ---
   const renderDashboard = () => {
-    // 1. PAPI VIEW
     if (currentUser.role === 'investor') {
       return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
     }
-    // 2. OLIVER VIEW
     if (currentUser.role === 'backer') {
       return (
         <OliverDashboard 
           currentUser={currentUser}
           players={players}
           isShiftActive={!!activeShift}
-          onStartShift={handleStartShift}
+          onStartShift={handleStartShiftClick} // Update to use Modal click
+          onEndShift={handleEndShift}
           onTransferToPapi={handleTransferToPapi}
           onTeamPay={() => setView('teamPay')}
           onLogMachine={() => setView('logMachine')}
         />
       );
     }
-    // 3. STANDARD PLAYER VIEW
     return (
       <PlayerDashboard 
         currentUser={currentUser}
+        players={players}
+        sessions={sessions}
+        withdrawals={withdrawals}
         isShiftActive={!!activeShift}
-        onStartShift={handleStartShift}
+        onStartShift={handleStartShiftClick} // Update to use Modal click
         onTeamPay={() => setView('teamPay')}
         onLogMachine={() => setView('logMachine')}
+        onCashout={handleSettleUp}
+        onTransfer={handleTransferToBacker}
+        onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
+        onDeleteSession={handleDeleteSession}
+        onDeleteWithdrawal={handleDeleteWithdrawal}
+        setView={setView}
       />
     );
   };
@@ -322,7 +326,8 @@ const App = () => {
       return (
         <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
             <header className="flex items-center mb-8 border-b border-gray-700 pb-4 gap-4"><button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full hover:bg-gray-700"><ArrowLeft size={20}/></button><h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1></header>
-            <main className="max-w-4xl mx-auto"><div className="text-center text-gray-500">Spectator Mode Active</div></main>
+            {/* Reusing PlayerDashboard in Read-Only Mode could work, but for now simple fallback */}
+             <div className="p-4 bg-gray-800 rounded text-center">Spectator Mode (Stats Only)</div>
         </div>
       );
   }
@@ -336,11 +341,9 @@ const App = () => {
           <p className="text-xs text-gray-400">Player: <span className="text-white font-bold">{currentUser?.name}</span></p>
         </div>
         
-        {/* NAV BUTTONS */}
         <div className="flex gap-2">
           <button onClick={() => setView('dashboard')} className={`p-2 rounded ${view === 'dashboard' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Activity size={20}/></button>
           
-          {/* Hide extra tabs from Papi */}
           {currentUser.role !== 'investor' && (
             <>
               <button onClick={() => setView('machineAnalytics')} className={`p-2 rounded ${view === 'machineAnalytics' ? 'bg-purple-600' : 'bg-gray-800'}`}><BarChart2 size={20}/></button>
@@ -370,6 +373,15 @@ const App = () => {
       
       {/* ACTIVE SHIFT FOOTER */}
       {activeShift && <ActiveShift shift={activeShift} onEnd={handleEndShift} />}
+
+      {/* MODAL FOR STARTING SHIFT */}
+      {showStartModal && (
+        <StartSessionModal 
+          casinoOptions={casinoOptions} 
+          onConfirm={handleConfirmStartShift} 
+          onCancel={() => setShowStartModal(false)} 
+        />
+      )}
     </div>
   );
 };
