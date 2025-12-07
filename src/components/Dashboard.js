@@ -12,7 +12,6 @@ const Dashboard = ({ currentUser, viewingUser, players, sessions, withdrawals, s
 
   // FIX: This line now correctly uses 'viewingUser'
   const targetUser = viewingUser || currentUser;
-  const isSpectator = !!viewingUser;
   
   const myStats = players.find(p => p.id === targetUser.id) || targetUser;
   const isInvestor = myStats.role === 'investor';

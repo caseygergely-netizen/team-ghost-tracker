@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from './firebase';
 import { 
   collection, onSnapshot, doc, updateDoc, addDoc, 
-  serverTimestamp, query, orderBy, where, deleteDoc, Timestamp, getDocs, writeBatch 
+  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch 
 } from 'firebase/firestore';
 import { 
-  Activity, BarChart2, Users, Settings, LogOut, BookOpen, ArrowLeft 
+  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft 
 } from 'lucide-react';
 
 // --- IMPORT COMPONENTS ---
