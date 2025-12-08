@@ -1,12 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { 
-  CheckCircle, ArrowRightLeft, TrendingUp, DollarSign, Database, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users 
+  CheckCircle, ArrowRightLeft, DollarSign, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users 
 } from 'lucide-react';
 import { getTierDetails, round5 } from '../utils';
 
 const PlayerDashboard = ({ 
-  currentUser, players, sessions, withdrawals, isShiftActive,
+  currentUser, viewingUser, players, sessions, withdrawals, isShiftActive,
   onStartShift, onTeamPay, onLogMachine, onCashout, onTransfer, 
   onEditSession, onDeleteSession, onDeleteWithdrawal, setView 
 }) => {
@@ -15,8 +15,12 @@ const PlayerDashboard = ({
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferAmount, setTransferAmount] = useState('');
 
-  // --- EXISTING STATS LOGIC ---
-  const myStats = players.find(p => p.id === currentUser.id) || currentUser;
+  // --- IDENTITY LOGIC ---
+  const targetUser = viewingUser || currentUser;
+  const isSpectator = !!viewingUser;
+
+  // --- STATS LOGIC ---
+  const myStats = players.find(p => p.id === targetUser.id) || targetUser;
   const surplus = myStats.heldCash - myStats.pinnedBankroll;
   const tier = getTierDetails(myStats.peakScore || myStats.tierScore || myStats.lifetimeProfit, myStats.currentTier);
   const playerShare = round5(surplus * tier.playerKeep);
@@ -27,7 +31,7 @@ const PlayerDashboard = ({
   // Graph Data
   const chartData = useMemo(() => {
     const mySessions = sessions
-      .filter(s => s.playersInvolved && s.playersInvolved.includes(currentUser.id))
+      .filter(s => s.playersInvolved && s.playersInvolved.includes(targetUser.id))
       .sort((a,b) => a.timestamp - b.timestamp);
     let runningTotal = 0;
     return mySessions.map(s => { 
@@ -36,7 +40,7 @@ const PlayerDashboard = ({
         runningTotal += share; 
         return { date: new Date(s.timestamp?.seconds * 1000).toLocaleDateString(), profit: runningTotal }; 
     });
-  }, [sessions, currentUser.id, players]);
+  }, [sessions, targetUser.id, players]);
 
   // Hourly Stats
   const hourlyStats = useMemo(() => {
@@ -48,25 +52,27 @@ const PlayerDashboard = ({
 
   // History List
   const history = sessions
-    .filter(s => s.playersInvolved && s.playersInvolved.includes(currentUser.id))
+    .filter(s => s.playersInvolved && s.playersInvolved.includes(targetUser.id))
     .sort((a,b) => b.timestamp - a.timestamp)
     .slice(0, 50);
 
   return (
     <div className="space-y-6">
       
-      {/* --- START SESSION BUTTON --- */}
-      <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 text-center shadow-lg">
-        {!isShiftActive ? (
-          <button onClick={onStartShift} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white text-xl font-bold py-4 px-12 rounded-full shadow-lg transform transition hover:scale-105 flex items-center justify-center gap-3 mx-auto">
-            <Play fill="currentColor" size={24} /> START SESSION
-          </button>
-        ) : (
-          <div className="inline-block px-8 py-3 bg-emerald-900/30 border border-emerald-500 text-emerald-400 rounded-lg animate-pulse font-bold">
-            LIVE SESSION ACTIVE
-          </div>
-        )}
-      </div>
+      {/* --- START SESSION BUTTON (Hide if Spectating) --- */}
+      {!isSpectator && (
+        <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 text-center shadow-lg">
+            {!isShiftActive ? (
+            <button onClick={onStartShift} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white text-xl font-bold py-4 px-12 rounded-full shadow-lg transform transition hover:scale-105 flex items-center justify-center gap-3 mx-auto">
+                <Play fill="currentColor" size={24} /> START SESSION
+            </button>
+            ) : (
+            <div className="inline-block px-8 py-3 bg-emerald-900/30 border border-emerald-500 text-emerald-400 rounded-lg animate-pulse font-bold">
+                LIVE SESSION ACTIVE
+            </div>
+            )}
+        </div>
+      )}
 
       {/* --- RICH STATS CARD --- */}
       <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 p-6 rounded-xl shadow-lg relative overflow-hidden">
@@ -97,44 +103,65 @@ const PlayerDashboard = ({
             <div><div className="text-xs text-gray-400 mb-1">Pinned</div><div className="text-xl font-mono text-blue-300">${myStats.pinnedBankroll.toLocaleString()}</div></div>
         </div>
         
-        <div className="mt-6 border-t border-gray-700 pt-4 flex gap-2">
-            {surplus > 0 ? (
-                <button onClick={() => setShowSettleModal(true)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><CheckCircle size={20} /> Settle Up</button>
-            ) : surplus === 0 ? (
-                <div className="flex-1 bg-gray-800 border border-emerald-900/30 text-emerald-500 py-3 rounded-lg text-center text-sm flex items-center justify-center font-bold">Even. Go get it! 🚀</div>
-            ) : (
-                <div className="flex-1 bg-gray-800 border border-red-900/50 text-gray-400 py-3 rounded-lg text-center text-sm flex items-center justify-center">In Makeup</div>
-            )}
-            <button onClick={() => setShowTransferModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded-lg flex items-center justify-center"><ArrowRightLeft size={20} /></button>
+        {/* ACTION BUTTONS (Hide if Spectating) */}
+        {!isSpectator && (
+            <div className="mt-6 border-t border-gray-700 pt-4 flex gap-2">
+                {surplus > 0 ? (
+                    <button onClick={() => setShowSettleModal(true)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><CheckCircle size={20} /> Settle Up</button>
+                ) : surplus === 0 ? (
+                    <div className="flex-1 bg-gray-800 border border-emerald-900/30 text-emerald-500 py-3 rounded-lg text-center text-sm flex items-center justify-center font-bold">Even. Go get it! 🚀</div>
+                ) : (
+                    <div className="flex-1 bg-gray-800 border border-red-900/50 text-gray-400 py-3 rounded-lg text-center text-sm flex items-center justify-center">In Makeup</div>
+                )}
+                <button onClick={() => setShowTransferModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded-lg flex items-center justify-center"><ArrowRightLeft size={20} /></button>
+            </div>
+        )}
+      </div>
+
+      {/* --- RECENT WITHDRAWALS (Restored!) --- */}
+      {withdrawals && withdrawals.length > 0 && (
+          <div className="bg-gray-800/50 p-3 rounded border border-gray-700">
+              <h4 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1"><History size={12}/> Recent Withdrawals</h4>
+              <div className="space-y-1">
+                  {withdrawals.map(w => (
+                      <div key={w.id} className="flex justify-between text-xs text-gray-300">
+                          <span>{w.method}</span>
+                          <div className="flex items-center gap-2">
+                              <span className="text-emerald-400 font-bold">-${w.amount}</span>
+                              {!isSpectator && (
+                                <button onClick={() => onDeleteWithdrawal(w.id)} className="text-gray-600 hover:text-red-400"><Trash2 size={10}/></button>
+                              )}
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      )}
+
+      {/* --- QUICK ACTIONS (Hide if Spectating) --- */}
+      {!isSpectator && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <button onClick={() => setView('logTeamSession')} className="bg-blue-900/20 hover:bg-blue-900/40 p-4 rounded-xl border border-blue-500/50 flex flex-col items-center gap-2 transition group">
+            <Users size={24} className="text-blue-400 group-hover:text-blue-300" />
+            <span className="font-bold text-blue-100">Log Team Play</span>
+            </button>
+
+            <button onClick={onTeamPay} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
+            <DollarSign size={24} className="text-yellow-500" />
+            <span className="font-bold text-gray-300">Log Team Pay</span>
+            </button>
+
+            <button onClick={onLogMachine} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
+            <BarChart2 size={24} className="text-purple-500" />
+            <span className="font-bold text-gray-300">Machine Log</span>
+            </button>
+
+            <button onClick={() => setView('playInfo')} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
+            <BookOpen size={24} className="text-cyan-400" />
+            <span className="font-bold text-gray-300">Play Info</span>
+            </button>
         </div>
-      </div>
-
-      {/* --- QUICK ACTIONS --- */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* LOG TEAM PLAY */}
-        <button onClick={() => setView('logTeamSession')} className="bg-blue-900/20 hover:bg-blue-900/40 p-4 rounded-xl border border-blue-500/50 flex flex-col items-center gap-2 transition group">
-          <Users size={24} className="text-blue-400 group-hover:text-blue-300" />
-          <span className="font-bold text-blue-100">Log Team Play</span>
-        </button>
-
-        {/* LOG TEAM PAY */}
-        <button onClick={onTeamPay} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
-          <DollarSign size={24} className="text-yellow-500" />
-          <span className="font-bold text-gray-300">Log Team Pay</span>
-        </button>
-
-        {/* LOG MACHINE */}
-        <button onClick={onLogMachine} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
-          <BarChart2 size={24} className="text-purple-500" />
-          <span className="font-bold text-gray-300">Machine Log</span>
-        </button>
-
-        {/* NEW: PLAY INFO BUTTON */}
-        <button onClick={() => setView('playInfo')} className="bg-gray-800 hover:bg-gray-700 p-4 rounded-xl border border-gray-700 flex flex-col items-center gap-2 transition">
-          <BookOpen size={24} className="text-cyan-400" />
-          <span className="font-bold text-gray-300">Play Info</span>
-        </button>
-      </div>
+      )}
 
       {/* --- PROFIT GRAPH --- */}
       <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 h-64">
@@ -156,7 +183,7 @@ const PlayerDashboard = ({
         <div className="max-h-80 overflow-y-auto">
             <table className="w-full text-left text-sm">
                 <thead className="bg-gray-900 text-gray-400">
-                    <tr><th className="p-3">Date</th><th className="p-3">Casino</th><th className="p-3 text-right">Result</th><th className="p-3 text-right">Actions</th></tr>
+                    <tr><th className="p-3">Date</th><th className="p-3">Casino</th><th className="p-3 text-right">Result</th>{!isSpectator && <th className="p-3 text-right">Actions</th>}</tr>
                 </thead>
                 <tbody>
                     {history.map(s => {
@@ -172,10 +199,12 @@ const PlayerDashboard = ({
                                         `$${s.totalProfit}`
                                     )}
                                 </td>
-                                <td className="p-3 text-right flex justify-end gap-2">
-                                    <button onClick={() => onEditSession(s)} className="p-1 hover:text-emerald-400"><Edit2 size={16} /></button>
-                                    <button onClick={() => onDeleteSession(s.id)} className="p-1 hover:text-red-400"><Trash2 size={16} /></button>
-                                </td>
+                                {!isSpectator && (
+                                    <td className="p-3 text-right flex justify-end gap-2">
+                                        <button onClick={() => onEditSession(s)} className="p-1 hover:text-emerald-400"><Edit2 size={16} /></button>
+                                        <button onClick={() => onDeleteSession(s.id)} className="p-1 hover:text-red-400"><Trash2 size={16} /></button>
+                                    </td>
+                                )}
                             </tr>
                         );
                     })}

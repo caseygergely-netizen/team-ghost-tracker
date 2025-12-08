@@ -61,14 +61,23 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    if (!currentUser) return;
-    const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", currentUser.id)), (snap) => {
+    // If viewing someone, listen to THEIR withdrawals. If just me, listen to MINE.
+    const targetId = viewingPlayer ? viewingPlayer.id : currentUser?.id;
+    if (!targetId) return;
+
+    const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", targetId)), (snap) => {
         const sorted = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
         setWithdrawals(sorted);
     });
-    const unsubPending = onSnapshot(query(collection(db, "pendingActions"), where("targetPlayerId", "==", currentUser.id)), (snap) => setPendingActions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
+    // Only listen to pending actions for ME (the logged in user)
+    let unsubPending = () => {};
+    if (currentUser) {
+        unsubPending = onSnapshot(query(collection(db, "pendingActions"), where("targetPlayerId", "==", currentUser.id)), (snap) => setPendingActions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    }
+
     return () => { unsubWithdrawals(); unsubPending(); };
-  }, [currentUser]);
+  }, [currentUser, viewingPlayer]); // Re-run if we switch spectator target
 
   const sortedPlayers = useMemo(() => {
     return [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0));
@@ -90,25 +99,41 @@ const App = () => {
   const handleLogin = (player) => { setCurrentUser(player); setView('dashboard'); };
   const handleLogout = () => { setCurrentUser(null); setViewingPlayer(null); setView('login'); setPendingActions([]); };
   const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
-  const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
-  const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
-
-  const handleStartShiftClick = () => {
-    setShowStartModal(true);
+  
+  const handleViewPlayer = (player) => { 
+      setViewingPlayer(player); 
+      setView('spectator'); 
+  };
+  
+  const handleBackToTeam = () => { 
+      setViewingPlayer(null); 
+      setView('teamRoster'); 
   };
 
+  const handleStartShiftClick = () => { setShowStartModal(true); };
   const handleConfirmStartShift = (casino) => {
     setActiveShift({ casino, startTime: new Date().toISOString() });
     setShowStartModal(false);
     showNotification("Shift Started! Timer running.");
   };
 
-  const handleEndShift = () => {
-      setEditingSession(null); 
-      setView('endShift'); // NEW VIEW FOR SHIFT END
-  };
+  const handleEndShift = () => { setEditingSession(null); setView('endShift'); };
 
   // --- LOGIC ---
+  
+  // NEW: Papi Legacy Adjustment (Oliver Only)
+  const handlePapiLegacyAdd = async (amount) => {
+      if (!currentUser || currentUser.role !== 'backer') return;
+      const papiDoc = players.find(p => p.role === 'investor');
+      if (!papiDoc) return alert("No Investor found.");
+      
+      await updateDoc(doc(db, "players", papiDoc.id), { 
+          investorBalance: (papiDoc.investorBalance || 0) + amount,
+          lifetimeEarnings: (papiDoc.lifetimeEarnings || 0) + amount
+      });
+      showNotification(`Added $${amount} to Papi (Legacy).`);
+  };
+
   const handleSessionSubmit = async (data) => {
     const { totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, sessionTimestamp, sessionId, isLegacy, papiBacked } = data;
     if (sessionId) await revertSessionMath(sessionId);
@@ -147,10 +172,7 @@ const App = () => {
       const sessionData = { timestamp: sessionTimestamp, createdAt: serverTimestamp(), casino, game: game || 'Shift', duration, totalProfit, playersInvolved: selectedPlayerIds, cashHolderId: cashHolderId || null, isLegacy: isLegacy || false, papiBacked: papiBacked || false, type: selectedPlayerIds.length > 1 ? 'team' : 'solo' };
       if (sessionId) { await updateDoc(doc(db, "sessions", sessionId), sessionData); showNotification("Session Updated!"); } 
       else { await addDoc(collection(db, "sessions"), sessionData); showNotification(isLegacy ? "Historical Entry Saved" : "Shift Logged!"); }
-      
-      // If we were ending a shift, clear it now
       if (view === 'endShift' || activeShift) setActiveShift(null);
-      
       setEditingSession(null); setView('dashboard');
     } catch (e) { showNotification("Error logging session"); }
   };
@@ -189,14 +211,36 @@ const App = () => {
     const { winnerId, amount } = data;
     const otherShares = round5(amount * 0.035);
     const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const playerActivity = {};
-    sessions.forEach(s => { 
-        if (new Date(s.timestamp.seconds * 1000) >= sevenDaysAgo) { 
-            if (s.type === 'solo' && s.playersInvolved?.[0]) playerActivity[s.playersInvolved[0]] = (playerActivity[s.playersInvolved[0]] || 0) + 1;
-            else if (s.type === 'team' && s.cashHolderId) playerActivity[s.cashHolderId] = (playerActivity[s.cashHolderId] || 0) + 1;
-        } 
+    
+    // NEW 7-HOUR RULE LOGIC
+    // We count "active sessions" (solo or being cash holder in team)
+    // But they must be separated by 7 hours to count as distinct.
+    const playerCounts = {};
+
+    players.forEach(p => {
+        // Filter sessions for this player in last 7 days
+        const playerSessions = sessions.filter(s => {
+            const sDate = new Date(s.timestamp.seconds * 1000);
+            const isRecent = sDate >= sevenDaysAgo;
+            const isRelevant = (s.type === 'solo' && s.playersInvolved?.[0] === p.id) || (s.type === 'team' && s.cashHolderId === p.id);
+            return isRecent && isRelevant;
+        }).sort((a,b) => a.timestamp.seconds - b.timestamp.seconds); // Sort Oldest to Newest
+
+        let count = 0;
+        let lastSessionTime = 0;
+
+        playerSessions.forEach(s => {
+            const sTime = s.timestamp.seconds * 1000;
+            // 7 Hours in milliseconds = 7 * 60 * 60 * 1000 = 25200000
+            if (sTime - lastSessionTime >= 25200000) {
+                count++;
+                lastSessionTime = sTime;
+            }
+        });
+        playerCounts[p.id] = count;
     });
-    const activePlayerIds = players.filter(p => p.id !== winnerId && p.role !== 'backer' && p.role !== 'investor' && (playerActivity[p.id] || 0) >= 3).map(p => p.id);
+
+    const activePlayerIds = players.filter(p => p.id !== winnerId && p.role !== 'backer' && p.role !== 'investor' && (playerCounts[p.id] || 0) >= 3).map(p => p.id);
     const winnerDoc = players.find(p => p.id === winnerId);
     if (winnerDoc.role !== 'backer' && winnerDoc.role !== 'investor') {
         const winnerRef = doc(db, "players", winnerId);
@@ -290,10 +334,12 @@ const App = () => {
         <OliverDashboard 
           currentUser={currentUser}
           players={players}
+          sessions={sessions} // NEW: PASS SESSIONS FOR GRAPH
           isShiftActive={!!activeShift}
           onStartShift={handleStartShiftClick}
           onEndShift={handleEndShift}
           onTransferToPapi={handleTransferToPapi}
+          onPapiLegacyAdd={handlePapiLegacyAdd} // NEW: PASS LEGACY ADD
           onTeamPay={() => setView('teamPay')}
           onLogMachine={() => setView('logMachine')}
           onLogTeamSession={() => setView('logTeamSession')}
@@ -326,8 +372,31 @@ const App = () => {
   if (view === 'spectator' && viewingPlayer) {
       return (
         <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
-            <header className="flex items-center mb-8 border-b border-gray-700 pb-4 gap-4"><button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full hover:bg-gray-700"><ArrowLeft size={20}/></button><h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1></header>
-             <div className="p-4 bg-gray-800 rounded text-center">Spectator Mode (Stats Only)</div>
+            <header className="flex items-center mb-8 border-b border-gray-700 pb-4 gap-4">
+                <button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full hover:bg-gray-700">
+                    <ArrowLeft size={20}/>
+                </button>
+                <h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1>
+            </header>
+             
+             {/* REUSE PLAYER DASHBOARD FOR SPECTATOR */}
+             <PlayerDashboard 
+                currentUser={currentUser} // Me (The Spectator)
+                viewingUser={viewingPlayer} // Him (The Player I'm watching)
+                players={players}
+                sessions={sessions}
+                withdrawals={withdrawals} // Updated to show HIS withdrawals due to useEffect
+                isShiftActive={false} // Spectators can't start shifts for others
+                onStartShift={() => {}} // Disabled
+                onTeamPay={() => {}} // Disabled
+                onLogMachine={() => {}} // Disabled
+                onCashout={() => {}} // Disabled
+                onTransfer={() => {}} // Disabled
+                onEditSession={() => {}} // Disabled
+                onDeleteSession={() => {}} // Disabled
+                onDeleteWithdrawal={() => {}} // Disabled
+                setView={() => {}} // Disabled
+            />
         </div>
       );
   }
@@ -363,7 +432,6 @@ const App = () => {
         {view === 'dashboard' && renderDashboard()}
         {view === 'teamRoster' && <TeamRoster players={players} sessions={sessions} onViewPlayer={handleViewPlayer} />}
         
-        {/* --- SESSION LOGGER: Handles Edit, End Shift, and Team Log --- */}
         {(view === 'logSession' || view === 'endShift' || view === 'logTeamSession') && (
            <SessionLogger 
               players={players} 
@@ -385,17 +453,8 @@ const App = () => {
         {view === 'settings' && <PlayerAdmin players={players} onImport={handleBulkImport} onClear={handleClearLogs} onClearImports={handleClearImports} />}
       </main>
       
-      {/* ACTIVE SHIFT FOOTER */}
       {activeShift && <ActiveShift shift={activeShift} onEnd={handleEndShift} />}
-
-      {/* MODAL FOR STARTING SHIFT */}
-      {showStartModal && (
-        <StartSessionModal 
-          casinoOptions={casinoOptions} 
-          onConfirm={handleConfirmStartShift} 
-          onCancel={() => setShowStartModal(false)} 
-        />
-      )}
+      {showStartModal && <StartSessionModal casinoOptions={casinoOptions} onConfirm={handleConfirmStartShift} onCancel={() => setShowStartModal(false)} />}
     </div>
   );
 };

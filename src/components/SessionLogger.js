@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Calculator, MapPin, Ghost, Users, Clock, Lock } from 'lucide-react';
+import { Calculator, MapPin, Ghost, Users, Clock, Lock } from 'lucide-react';
 import { Timestamp } from 'firebase/firestore';
 import { getLocalDate } from '../utils';
 
@@ -11,13 +11,15 @@ const SessionLogger = ({
   const isShiftEnd = mode === 'shift';
   
   // -- INITIALIZATION --
-  // If Shift Mode: Force current user. If Team Mode: Allow selection.
   const [selectedIds, setSelectedIds] = useState(
     initialData?.playersInvolved || (isShiftEnd ? [currentUser.id] : [])
   );
   const [cashHolderId, setCashHolderId] = useState(initialData?.cashHolderId || (isShiftEnd ? currentUser.id : ''));
   const [useBankrollMode, setUseBankrollMode] = useState(true);
-  const [isLegacy, setIsLegacy] = useState(initialData?.isLegacy || false);
+  
+  // Warning Fix: Removed unused setIsLegacy
+  const [isLegacy] = useState(initialData?.isLegacy || false);
+  
   const [papiBacked, setPapiBacked] = useState(initialData?.papiBacked || false);
   const [showCasinoList, setShowCasinoList] = useState(false);
   
@@ -39,7 +41,6 @@ const SessionLogger = ({
       const d = new Date(initialData.timestamp.seconds * 1000);
       initDate = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       initStart = d.toTimeString().slice(0,5);
-      // Calculate end time based on duration
       const e = new Date(d.getTime() + (initialData.duration * 60 * 60 * 1000));
       initEnd = e.toTimeString().slice(0,5);
   }
@@ -54,13 +55,11 @@ const SessionLogger = ({
     endBankroll: '' 
   });
 
-  // Auto-fill bankroll if solo team play
   useEffect(() => {
       if (!initialData && selectedIds.length === 1 && !formData.startBankroll && !isShiftEnd) { 
         const soloPlayer = players.find(p => p.id === selectedIds[0]); 
         if (soloPlayer) setFormData(prev => ({ ...prev, startBankroll: soloPlayer.heldCash })); 
       }
-      // If Shift End, always use current user's held cash
       if (isShiftEnd && !formData.startBankroll) {
          setFormData(prev => ({ ...prev, startBankroll: currentUser.heldCash }));
       }
@@ -120,7 +119,6 @@ const SessionLogger = ({
 
       <form onSubmit={handleSubmit} className="space-y-6">
         
-        {/* --- TEAM OPTIONS (Hidden if End Shift) --- */}
         {!isShiftEnd && (
           <div className="space-y-4 p-4 bg-gray-900/50 rounded-xl border border-gray-700">
              <div className="flex gap-2">
@@ -133,7 +131,6 @@ const SessionLogger = ({
              <div>
                 <label className="block text-sm text-gray-400 mb-2">Who Played?</label>
                 <div className="flex flex-wrap gap-2">
-                  {/* FIX: Removed check for 'backer' so Oliver can play too. Only 'investor' is excluded */}
                   {players.filter(p => p.role !== 'investor').map(p => (
                     <button key={p.id} type="button" onClick={() => togglePlayer(p.id)} className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${selectedIds.includes(p.id) ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300'}`}>
                       {p.name}
@@ -156,7 +153,6 @@ const SessionLogger = ({
           </div>
         )}
 
-        {/* --- LOCKED SHIFT DETAILS (Read-Only) --- */}
         {isShiftEnd && (
             <div className="grid grid-cols-2 gap-4 p-4 bg-gray-900 rounded border border-gray-700 opacity-75">
                 <div><label className="text-xs text-gray-500">Casino</label><div className="font-bold flex items-center gap-2"><Lock size={12}/>{formData.casino}</div></div>
@@ -166,7 +162,6 @@ const SessionLogger = ({
             </div>
         )}
 
-        {/* --- EDITABLE DETAILS (Only if NOT Shift End) --- */}
         {!isShiftEnd && (
             <>
                 <div>
@@ -185,7 +180,6 @@ const SessionLogger = ({
             </>
         )}
 
-        {/* --- PROFIT / BANKROLL --- */}
         <div className="flex items-center gap-2 mb-2 p-2 bg-gray-900 rounded">
             <button type="button" onClick={() => setUseBankrollMode(!useBankrollMode)} className="flex items-center gap-2 text-sm font-bold text-blue-400">
                 <Calculator size={16} /> {useBankrollMode ? "Switch to Total Profit Input" : "Switch to Bankroll Calculator"}
