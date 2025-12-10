@@ -329,20 +329,23 @@ const App = () => {
     if (currentUser.role === 'investor') {
       return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
     }
-    if (currentUser.role === 'backer') {
+if (currentUser.role === 'backer') {
       return (
         <OliverDashboard 
           currentUser={currentUser}
           players={players}
-          sessions={sessions} // NEW: PASS SESSIONS FOR GRAPH
+          sessions={sessions}
           isShiftActive={!!activeShift}
           onStartShift={handleStartShiftClick}
           onEndShift={handleEndShift}
           onTransferToPapi={handleTransferToPapi}
-          onPapiLegacyAdd={handlePapiLegacyAdd} // NEW: PASS LEGACY ADD
+          onPapiLegacyAdd={handlePapiLegacyAdd}
           onTeamPay={() => setView('teamPay')}
           onLogMachine={() => setView('logMachine')}
           onLogTeamSession={() => setView('logTeamSession')}
+          // PASSED HANDLERS FOR HISTORY EDITING
+          onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
+          onDeleteSession={handleDeleteSession}
         />
       );
     }

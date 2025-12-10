@@ -1,11 +1,13 @@
 import React, { useState, useMemo } from 'react';
-import { DollarSign, Play, BarChart2, Users, TrendingUp } from 'lucide-react';
+import { DollarSign, Play, BarChart2, Users, TrendingUp, Activity, Edit2, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { round5 } from '../utils';
 
 const OliverDashboard = ({ 
-  players, isShiftActive, sessions,
+  currentUser, players, isShiftActive, sessions,
   onStartShift, onTransferToPapi, 
-  onTeamPay, onLogMachine, onLogTeamSession, onPapiLegacyAdd
+  onTeamPay, onLogMachine, onLogTeamSession, onPapiLegacyAdd,
+  onEditSession, onDeleteSession 
 }) => {
   const [transferAmount, setTransferAmount] = useState('');
   const [legacyAmount, setLegacyAmount] = useState('');
@@ -22,6 +24,12 @@ const OliverDashboard = ({
       return { date: new Date(s.timestamp?.seconds * 1000).toLocaleDateString(), profit: runningTotal };
     });
   }, [sessions]);
+
+  // HISTORY DATA (Oliver's Personal Play)
+  const history = sessions
+    .filter(s => s.playersInvolved && s.playersInvolved.includes(currentUser.id))
+    .sort((a,b) => b.timestamp - a.timestamp)
+    .slice(0, 50);
 
   const handleTransfer = (e) => {
     e.preventDefault();
@@ -134,6 +142,42 @@ const OliverDashboard = ({
             <span className="text-gray-300 font-bold group-hover:text-white">Log Machine Data</span>
             <BarChart2 className="text-purple-500" />
           </button>
+        </div>
+      </div>
+
+      {/* SECTION D: HISTORY TABLE (NEW) */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <div className="p-4 border-b border-gray-700 font-bold flex items-center gap-2"><Activity size={18}/> My Session History</div>
+        <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-left text-sm">
+                <thead className="bg-gray-900 text-gray-400">
+                    <tr><th className="p-3">Date</th><th className="p-3">Casino</th><th className="p-3 text-right">Result</th><th className="p-3 text-right">Actions</th></tr>
+                </thead>
+                <tbody>
+                    {history.length > 0 ? history.map(s => {
+                        const myShare = round5(s.totalProfit / s.playersInvolved.length);
+                        return (
+                            <tr key={s.id} className="border-b border-gray-700">
+                                <td className="p-3 text-gray-400"><div>{new Date(s.timestamp?.seconds * 1000).toLocaleDateString()}</div></td>
+                                <td className="p-3 font-medium">{s.casino}</td>
+                                <td className={`p-3 text-right font-bold ${s.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {s.playersInvolved.length > 1 ? (
+                                        <div className="flex flex-col items-end"><span className="text-amber-400">${myShare}</span><span className="text-[10px] text-gray-500">split</span></div>
+                                    ) : (
+                                        `$${s.totalProfit}`
+                                    )}
+                                </td>
+                                <td className="p-3 text-right flex justify-end gap-2">
+                                    <button onClick={() => onEditSession(s)} className="p-1 hover:text-emerald-400"><Edit2 size={16} /></button>
+                                    <button onClick={() => onDeleteSession(s.id)} className="p-1 hover:text-red-400"><Trash2 size={16} /></button>
+                                </td>
+                            </tr>
+                        );
+                    }) : (
+                        <tr><td colSpan="4" className="p-4 text-center text-gray-500">No sessions yet.</td></tr>
+                    )}
+                </tbody>
+            </table>
         </div>
       </div>
     </div>
