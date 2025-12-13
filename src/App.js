@@ -451,7 +451,7 @@ if (currentUser.role === 'backer') {
 
         {view === 'teamPay' && <TeamPayLogger players={players} onSubmit={handleTeamPay} onCancel={() => setView('dashboard')} />}
         {view === 'logMachine' && <MachineLogger onSubmit={handleMachineSubmit} onCancel={() => setView('dashboard')} />}
-        {view === 'machineAnalytics' && <MachineAnalytics logs={machineLogs} onDeleteLog={handleDeleteLog} />}
+        {view === 'machineAnalytics' && <MachineAnalytics logs={machineLogs} sessions={sessions} onDeleteLog={handleDeleteLog} />}
         {view === 'playInfo' && <PlayInfo games={games} onAdd={handleGameSubmit} onEdit={handleGameSubmit} onDelete={handleDeleteGame} />}
         {view === 'settings' && <PlayerAdmin players={players} onImport={handleBulkImport} onClear={handleClearLogs} onClearImports={handleClearImports} />}
       </main>
