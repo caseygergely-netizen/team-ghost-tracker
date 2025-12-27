@@ -1,32 +1,68 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Clock, Calculator, Lock, Play } from 'lucide-react';
+import { Users, Clock, Calculator, MapPin, Calendar, Play } from 'lucide-react';
 import { parseMoney } from '../utils';
 import { Timestamp } from 'firebase/firestore';
 
-const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, mode, onSubmit, onCancel }) => {
-  const isShiftEnd = mode === 'shift';
+const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, initialData, mode, onSubmit, onCancel }) => {
+  const isShiftMode = mode === 'shift';
   
-  // -- STATE --
-  const [formData, setFormData] = useState({
-    totalProfit: '',
-    startAmount: '', 
-    endAmount: '',
-    selectedPlayerIds: [currentUser.id],
-    cashHolderId: currentUser.id,
-    papiBacked: false
+  // -- HELPER: Get HH:MM string from date --
+  const getTimeString = (dateObj) => {
+      if (!dateObj) return '';
+      return dateObj.toTimeString().slice(0, 5); // "14:30"
+  };
+
+  // -- HELPER: Get YYYY-MM-DD string --
+  const getDateString = (dateObj) => {
+      if (!dateObj) return '';
+      return dateObj.toISOString().split('T')[0];
+  };
+
+  // -- INITIALIZE STATE --
+  // We determine defaults based on whether we are Editing, Ending a Shift, or Starting fresh.
+  const [formData, setFormData] = useState(() => {
+      let defaults = {
+          date: getDateString(new Date()),
+          startTime: getTimeString(new Date()),
+          endTime: getTimeString(new Date()),
+          casino: '',
+          totalProfit: '',
+          startAmount: '',
+          endAmount: '',
+          selectedPlayerIds: [currentUser.id],
+          cashHolderId: currentUser.id,
+          papiBacked: false
+      };
+
+      if (initialData) {
+          // EDITING AN OLD SESSION
+          const d = new Date(initialData.timestamp.seconds * 1000);
+          const endD = new Date(d.getTime() + (initialData.duration * 60 * 60 * 1000));
+          
+          defaults = {
+              ...defaults,
+              ...initialData,
+              date: getDateString(d),
+              startTime: getTimeString(d),
+              endTime: getTimeString(endD),
+              selectedPlayerIds: initialData.playersInvolved || [currentUser.id],
+              papiBacked: initialData.papiBacked || false,
+          };
+      } else if (activeShiftData && isShiftMode) {
+          // ENDING ACTIVE SHIFT
+          const startD = new Date(activeShiftData.startTime);
+          defaults.date = getDateString(startD);
+          defaults.startTime = getTimeString(startD);
+          defaults.endTime = getTimeString(new Date()); // Now
+          defaults.casino = activeShiftData.casino;
+          defaults.startAmount = currentUser.heldCash || ''; // Auto-fill current held cash
+      }
+
+      return defaults;
   });
 
-  // Toggle for "Calculator Mode" (Only for Shift End)
-  const [useBankrollMode, setUseBankrollMode] = useState(isShiftEnd); 
-
-  // -- INITIALIZATION EFFECT --
-  useEffect(() => {
-    // If ending a shift, auto-populate the "Start Amount" with current Held Cash
-    // BUT only if the field is empty (don't overwrite if user typed)
-    if (isShiftEnd && !formData.startAmount && currentUser) {
-        setFormData(prev => ({ ...prev, startAmount: currentUser.heldCash }));
-    }
-  }, [isShiftEnd, currentUser]);
+  // Toggle for "Calculator Mode" (Defaults to TRUE if it's a shift, FALSE if team play)
+  const [useBankrollMode, setUseBankrollMode] = useState(isShiftMode); 
 
   // -- HANDLERS --
   const handleChange = (f, v) => setFormData(prev => ({ ...prev, [f]: v }));
@@ -48,24 +84,30 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, m
   const handleSubmit = (e) => {
     e.preventDefault();
     
-    // 1. Determine Profit
+    // 1. Calculate Duration from Times
+    let finalDuration = 0;
+    let sessionTimestamp = new Date(); // Default to now
+
+    if (isShiftMode) {
+        const start = new Date(`${formData.date}T${formData.startTime}`);
+        let end = new Date(`${formData.date}T${formData.endTime}`);
+        
+        // Handle overnight shifts (if End Time is earlier than Start Time, assume next day)
+        if (end < start) {
+            end.setDate(end.getDate() + 1);
+        }
+
+        const diffMs = end - start;
+        finalDuration = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0; // Hours
+        sessionTimestamp = start;
+    }
+
+    // 2. Calculate Profit
     let finalProfit = 0;
-    if (isShiftEnd && useBankrollMode) {
+    if (useBankrollMode && isShiftMode) {
         finalProfit = calculateProfit();
     } else {
         finalProfit = parseMoney(formData.totalProfit);
-    }
-
-    // 2. Determine Duration (Auto-calc for Shift, 0 for Team)
-    let finalDuration = 0;
-    let sessionTimestamp = new Date();
-
-    if (isShiftEnd && activeShiftData) {
-        const start = new Date(activeShiftData.startTime);
-        const now = new Date();
-        const diffMs = now - start;
-        finalDuration = diffMs / (1000 * 60 * 60); // Convert ms to hours
-        sessionTimestamp = start; // Session is logged at start time of shift
     }
 
     onSubmit({
@@ -73,53 +115,50 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, m
       totalProfit: finalProfit,
       duration: finalDuration,
       sessionTimestamp,
-      casino: activeShiftData?.casino || '', // Auto-filled from shift
-      game: isShiftEnd ? 'Shift' : 'Team Play',
-      type: isShiftEnd ? 'solo' : 'team' // Backend override logic handles this too
+      type: isShiftMode ? 'solo' : 'team'
     });
   };
 
   const activePlayers = players.filter(p => !['backer', 'investor'].includes(p.role));
 
-  // -- RENDER HELPERS --
-  const renderShiftHeader = () => {
-      if (!activeShiftData) return null;
-      const start = new Date(activeShiftData.startTime);
-      return (
-        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 mb-6 grid grid-cols-2 gap-4 text-sm">
-            <div>
-                <span className="text-gray-500 block text-xs">Casino</span>
-                <span className="font-bold text-white flex items-center gap-2"><Lock size={12} className="text-emerald-500"/> {activeShiftData.casino}</span>
-            </div>
-            <div>
-                <span className="text-gray-500 block text-xs">Date</span>
-                <span className="font-bold text-white">{start.toLocaleDateString()}</span>
-            </div>
-            <div>
-                <span className="text-gray-500 block text-xs">Start Time</span>
-                <span className="font-bold text-white">{start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-            </div>
-            <div>
-                <span className="text-gray-500 block text-xs">End Time</span>
-                <span className="font-bold text-white text-emerald-400">Now</span>
-            </div>
-        </div>
-      );
-  };
-
   return (
     <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 max-w-lg mx-auto">
       <h2 className="text-xl font-bold mb-6 text-emerald-400 flex items-center gap-2">
-        {isShiftEnd ? <Clock /> : <Users />} 
-        {isShiftEnd ? "End Shift" : "Log Team Play"}
+        {isShiftMode ? <Clock /> : <Users />} 
+        {initialData ? "Edit Session" : (isShiftMode ? "End Shift" : "Log Team Play")}
       </h2>
-
-      {isShiftEnd && renderShiftHeader()}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         
-        {/* --- TEAM MODE: PLAYER SELECTION --- */}
-        {!isShiftEnd && (
+        {/* --- SHIFT DETAILS (Date/Time/Casino) --- */}
+        {isShiftMode && (
+            <div className="bg-gray-900 p-4 rounded border border-gray-700 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1"><Calendar size={12}/> Date</label>
+                        <input type="date" className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm" value={formData.date} onChange={e => handleChange('date', e.target.value)} />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1"><MapPin size={12}/> Casino</label>
+                        <input list="casinos" className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm" value={formData.casino} onChange={e => handleChange('casino', e.target.value)} />
+                        <datalist id="casinos">{casinoOptions.map(c => <option key={c} value={c} />)}</datalist>
+                    </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-xs text-gray-400 mb-1">Start Time</label>
+                        <input type="time" className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm" value={formData.startTime} onChange={e => handleChange('startTime', e.target.value)} />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-gray-400 mb-1">End Time</label>
+                        <input type="time" className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm" value={formData.endTime} onChange={e => handleChange('endTime', e.target.value)} />
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* --- TEAM DETAILS (Players) --- */}
+        {!isShiftMode && (
           <div className="bg-gray-900 p-4 rounded border border-gray-700">
             <label className="block text-xs text-gray-400 mb-2">Who Played?</label>
             <div className="flex flex-wrap gap-2 mb-4">
@@ -165,23 +204,20 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, m
           </div>
         )}
 
-        {/* --- MONEY INPUTS --- */}
+        {/* --- MONEY INPUTS (Calculator vs Profit) --- */}
         <div>
-            {/* Toggle Button (Only for Shift) */}
-            {isShiftEnd && (
-                <div className="flex justify-end mb-2">
-                    <button 
-                        type="button" 
-                        onClick={() => setUseBankrollMode(!useBankrollMode)} 
-                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                    >
-                        <Calculator size={14}/> {useBankrollMode ? "Switch to Total Profit" : "Switch to Start/End Calculator"}
-                    </button>
-                </div>
-            )}
+            {/* Toggle Button */}
+            <div className="flex justify-end mb-2">
+                <button 
+                    type="button" 
+                    onClick={() => setUseBankrollMode(!useBankrollMode)} 
+                    className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                    <Calculator size={14}/> {useBankrollMode ? "Switch to Manual Profit" : "Switch to Start/End Calc"}
+                </button>
+            </div>
 
-            {/* Input Fields */}
-            {useBankrollMode && isShiftEnd ? (
+            {useBankrollMode ? (
                 <div className="bg-gray-900 p-4 rounded border border-blue-500/30 grid grid-cols-2 gap-4">
                     <div>
                         <label className="block text-xs text-blue-200 mb-1">Start Bankroll</label>
@@ -213,7 +249,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, m
         <div className="flex gap-3 pt-4">
           <button type="button" onClick={onCancel} className="flex-1 bg-gray-700 py-3 rounded font-bold text-gray-300 hover:bg-gray-600">Cancel</button>
           <button type="submit" className="flex-1 bg-emerald-600 py-3 rounded font-bold text-white hover:bg-emerald-500">
-            {isShiftEnd ? "Confirm & End Shift" : "Log Team Play"}
+            {initialData ? "Update Session" : (isShiftMode ? "Confirm & End Shift" : "Log Team Play")}
           </button>
         </div>
       </form>

@@ -51,7 +51,7 @@ const App = () => {
       else localStorage.removeItem('activeShift');
   }, [activeShift]);
 
-  // --- LIVE USER FIX: Always get the latest version from the players array ---
+  // --- LIVE USER FIX ---
   const liveCurrentUser = useMemo(() => {
       if (!currentUser) return null;
       return players.find(p => p.id === currentUser.id) || currentUser;
@@ -112,8 +112,7 @@ const App = () => {
 
   const handleEndShift = () => { setEditingSession(null); setView('endShift'); };
 
-  // --- CORE LOGIC (Money & Sessions) ---
-  
+  // --- CORE LOGIC ---
   const handlePapiLegacyAdd = async (amount) => {
       if (!currentUser || currentUser.role !== 'backer') return;
       const papiDoc = players.find(p => p.role === 'investor');
@@ -301,6 +300,7 @@ const App = () => {
   };
 
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
+  const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal? Stats won't revert.")) await deleteDoc(doc(db, "withdrawals", id)); };
 
   // --- RENDER HELPERS ---
   const renderDashboard = () => {
@@ -340,6 +340,7 @@ const App = () => {
         onTransfer={handleTransferToBacker}
         onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
         onDeleteSession={handleDeleteSession}
+        onDeleteWithdrawal={handleDeleteWithdrawal}
         setView={setView}
       />
     );
@@ -371,6 +372,7 @@ const App = () => {
                 onTransfer={() => {}} 
                 onEditSession={() => {}} 
                 onDeleteSession={() => {}} 
+                onDeleteWithdrawal={() => {}} 
                 setView={() => {}} 
             />
         </div>
@@ -416,7 +418,8 @@ const App = () => {
               games={games} 
               initialData={editingSession} 
               activeShiftData={activeShift} 
-              mode={(view === 'endShift' || (editingSession && !editingSession.playersInvolved)) ? 'shift' : 'team'}
+              // FIX: Correctly detect if we are editing a solo session vs team session
+              mode={(view === 'endShift' || (editingSession && editingSession.type === 'solo')) ? 'shift' : 'team'}
               onSubmit={handleSessionSubmit} 
               onCancel={() => { setEditingSession(null); setView('dashboard'); }} 
             />
