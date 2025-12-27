@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from './firebase';
 import { 
   collection, onSnapshot, doc, updateDoc, addDoc, 
-  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch 
+  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, limit 
 } from 'firebase/firestore';
 import { 
   Activity, BarChart2, Users, Settings, LogOut, ArrowLeft
@@ -51,37 +51,35 @@ const App = () => {
       else localStorage.removeItem('activeShift');
   }, [activeShift]);
 
+  // --- LIVE USER FIX: Always get the latest version from the players array ---
+  const liveCurrentUser = useMemo(() => {
+      if (!currentUser) return null;
+      return players.find(p => p.id === currentUser.id) || currentUser;
+  }, [players, currentUser]);
+
   // --- DATA LISTENERS ---
   useEffect(() => {
     const unsubPlayers = onSnapshot(collection(db, "players"), (snap) => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSessions = onSnapshot(query(collection(db, "sessions"), orderBy("timestamp", "desc")), (snap) => setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubMachines = onSnapshot(query(collection(db, "machineLogs"), orderBy("timestamp", "desc")), (snap) => setMachineLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSessions = onSnapshot(query(collection(db, "sessions"), orderBy("timestamp", "desc"), limit(100)), (snap) => setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubMachines = onSnapshot(query(collection(db, "machineLogs"), orderBy("timestamp", "desc"), limit(100)), (snap) => setMachineLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubGames = onSnapshot(collection(db, "games"), (snap) => setGames(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     return () => { unsubPlayers(); unsubSessions(); unsubMachines(); unsubGames(); };
   }, []);
 
   useEffect(() => {
-    // If viewing someone, listen to THEIR withdrawals. If just me, listen to MINE.
     const targetId = viewingPlayer ? viewingPlayer.id : currentUser?.id;
     if (!targetId) return;
-
-    const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", targetId)), (snap) => {
-        const sorted = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-        setWithdrawals(sorted);
+    const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", targetId), limit(50)), (snap) => {
+        setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)));
     });
-    
-    // Only listen to pending actions for ME (the logged in user)
     let unsubPending = () => {};
     if (currentUser) {
         unsubPending = onSnapshot(query(collection(db, "pendingActions"), where("targetPlayerId", "==", currentUser.id)), (snap) => setPendingActions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     }
-
     return () => { unsubWithdrawals(); unsubPending(); };
-  }, [currentUser, viewingPlayer]); // Re-run if we switch spectator target
+  }, [currentUser, viewingPlayer]);
 
-  const sortedPlayers = useMemo(() => {
-    return [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0));
-  }, [players]);
+  const sortedPlayers = useMemo(() => [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0)), [players]);
 
   const casinoOptions = useMemo(() => {
     const counts = {};
@@ -100,48 +98,58 @@ const App = () => {
   const handleLogout = () => { setCurrentUser(null); setViewingPlayer(null); setView('login'); setPendingActions([]); };
   const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
   
-  const handleViewPlayer = (player) => { 
-      setViewingPlayer(player); 
-      setView('spectator'); 
-  };
-  
-  const handleBackToTeam = () => { 
-      setViewingPlayer(null); 
-      setView('teamRoster'); 
-  };
+  const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
+  const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
 
   const handleStartShiftClick = () => { setShowStartModal(true); };
-  const handleConfirmStartShift = (casino) => {
+  
+  const handleConfirmStartShift = async (casino) => {
     setActiveShift({ casino, startTime: new Date().toISOString() });
     setShowStartModal(false);
-    showNotification("Shift Started! Timer running.");
+    if (currentUser) await updateDoc(doc(db, "players", currentUser.id), { isLive: true, currentCasino: casino });
+    showNotification("Shift Started! You are now visible online.");
   };
 
   const handleEndShift = () => { setEditingSession(null); setView('endShift'); };
 
-  // --- LOGIC ---
+  // --- CORE LOGIC (Money & Sessions) ---
   
-  // NEW: Papi Legacy Adjustment (Oliver Only)
   const handlePapiLegacyAdd = async (amount) => {
       if (!currentUser || currentUser.role !== 'backer') return;
       const papiDoc = players.find(p => p.role === 'investor');
-      if (!papiDoc) return alert("No Investor found.");
-      
-      await updateDoc(doc(db, "players", papiDoc.id), { 
-          investorBalance: (papiDoc.investorBalance || 0) + amount,
-          lifetimeEarnings: (papiDoc.lifetimeEarnings || 0) + amount
-      });
-      showNotification(`Added $${amount} to Papi (Legacy).`);
+      if (papiDoc) {
+        await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) + amount, lifetimeEarnings: (papiDoc.lifetimeEarnings || 0) + amount });
+        showNotification(`Added $${amount} to Papi.`);
+      }
   };
 
   const handleSessionSubmit = async (data) => {
-    const { totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, sessionTimestamp, sessionId, isLegacy, papiBacked } = data;
+    let { totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, sessionTimestamp, sessionId, isLegacy, papiBacked, startAmount, endAmount } = data;
+    
     if (sessionId) await revertSessionMath(sessionId);
-    const updates = [];
 
+    // Shift Logic (Exclusion Rule + Live Status)
+    if (activeShift && !sessionId && (!selectedPlayerIds || (selectedPlayerIds.length === 1 && !papiBacked))) {
+       const shiftStart = new Date(activeShift.startTime);
+       const sessionsDuringShift = sessions.filter(s => {
+          const sTime = new Date(s.timestamp.seconds * 1000);
+          return sTime > shiftStart && s.type === 'team' && s.cashHolderId === currentUser.id;
+       });
+       const alreadyLoggedProfit = sessionsDuringShift.reduce((acc, s) => acc + s.totalProfit, 0);
+       
+       if (startAmount && endAmount) {
+           const rawDiff = parseMoney(endAmount) - parseMoney(startAmount);
+           totalProfit = rawDiff - alreadyLoggedProfit;
+           showNotification(`Shift Profit Adjusted. Excluded ${alreadyLoggedProfit} from Team Plays.`);
+       }
+       await updateDoc(doc(db, "players", currentUser.id), { isLive: false, currentCasino: null });
+    }
+
+    const updates = [];
     if (!isLegacy) {
         let effectiveTeamProfit = totalProfit; let papiCut = 0;
         if (papiBacked) { papiCut = totalProfit * 0.50; effectiveTeamProfit = totalProfit * 0.50; }
+
         const profitPerPlayer = round5(effectiveTeamProfit / selectedPlayerIds.length);
         const pSnap = await getDocs(collection(db, "players"));
         const livePlayers = pSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -156,12 +164,23 @@ const App = () => {
           const player = livePlayers.find(lp => lp.id === pLocal.id) || pLocal;
           let { heldCash, pinnedBankroll, tierScore, peakScore, lifetimeEarnings, lifetimeHours, currentTier } = player;
           tierScore = tierScore || 0; peakScore = peakScore || tierScore; lifetimeEarnings = lifetimeEarnings || 0; lifetimeHours = (lifetimeHours || 0) + duration;
-          if (selectedPlayerIds.length > 1) {
-            if (player.id === cashHolderId) { heldCash += totalProfit; const amountOwed = totalProfit - profitPerPlayer; pinnedBankroll += amountOwed; } 
-            else { pinnedBankroll -= profitPerPlayer; }
+          
+          if (selectedPlayerIds.length > 1 || papiBacked) {
+            if (player.id === cashHolderId) { 
+                heldCash += totalProfit; 
+                pinnedBankroll += (totalProfit - profitPerPlayer); 
+            } else { 
+                pinnedBankroll -= profitPerPlayer; 
+            }
           } else { heldCash += profitPerPlayer; }
-          if (selectedPlayerIds.length > 1) { lifetimeEarnings += profitPerPlayer; if (player.id === cashHolderId) tierScore += profitPerPlayer; } 
-          else { lifetimeEarnings += profitPerPlayer; tierScore += profitPerPlayer; }
+
+          if (selectedPlayerIds.length > 1 || papiBacked) { 
+              lifetimeEarnings += profitPerPlayer; 
+              if (player.id === cashHolderId) tierScore += profitPerPlayer; 
+          } else { 
+              lifetimeEarnings += profitPerPlayer; tierScore += profitPerPlayer; 
+          }
+
           if (tierScore > peakScore) peakScore = tierScore;
           updates.push(updateDoc(doc(db, "players", player.id), { heldCash, pinnedBankroll, tierScore, peakScore, lifetimeEarnings, lifetimeHours, currentTier: getTierDetails(peakScore, currentTier).level }));
         });
@@ -169,9 +188,10 @@ const App = () => {
 
     try {
       await Promise.all(updates);
-      const sessionData = { timestamp: sessionTimestamp, createdAt: serverTimestamp(), casino, game: game || 'Shift', duration, totalProfit, playersInvolved: selectedPlayerIds, cashHolderId: cashHolderId || null, isLegacy: isLegacy || false, papiBacked: papiBacked || false, type: selectedPlayerIds.length > 1 ? 'team' : 'solo' };
+      const sessionData = { timestamp: sessionTimestamp, createdAt: serverTimestamp(), casino, game: game || 'Shift', duration, totalProfit, playersInvolved: selectedPlayerIds, cashHolderId: cashHolderId || null, isLegacy: isLegacy || false, papiBacked: papiBacked || false, type: (selectedPlayerIds.length > 1 || papiBacked) ? 'team' : 'solo' };
       if (sessionId) { await updateDoc(doc(db, "sessions", sessionId), sessionData); showNotification("Session Updated!"); } 
       else { await addDoc(collection(db, "sessions"), sessionData); showNotification(isLegacy ? "Historical Entry Saved" : "Shift Logged!"); }
+      
       if (view === 'endShift' || activeShift) setActiveShift(null);
       setEditingSession(null); setView('dashboard');
     } catch (e) { showNotification("Error logging session"); }
@@ -194,12 +214,12 @@ const App = () => {
         if (!player) return; 
         let { heldCash, pinnedBankroll, tierScore, lifetimeEarnings, lifetimeHours } = player;
         lifetimeHours -= sessionDoc.duration;
-        if (sessionDoc.type === 'team') {
+        if (sessionDoc.type === 'team' || sessionDoc.papiBacked) {
             if (pid === sessionDoc.cashHolderId) { heldCash -= sessionDoc.totalProfit; pinnedBankroll -= (sessionDoc.totalProfit - profitPerPlayer); } 
             else { pinnedBankroll += profitPerPlayer; }
         } else { heldCash -= profitPerPlayer; }
         lifetimeEarnings -= profitPerPlayer;
-        if (sessionDoc.type === 'team') { if (pid === sessionDoc.cashHolderId) tierScore -= profitPerPlayer; } else { tierScore -= profitPerPlayer; }
+        if (sessionDoc.type === 'team' || sessionDoc.papiBacked) { if (pid === sessionDoc.cashHolderId) tierScore -= profitPerPlayer; } else { tierScore -= profitPerPlayer; }
         updates.push(updateDoc(doc(db, "players", pid), { heldCash, pinnedBankroll, tierScore, lifetimeEarnings, lifetimeHours }));
     });
     await Promise.all(updates);
@@ -212,50 +232,38 @@ const App = () => {
     const otherShares = round5(amount * 0.035);
     const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
-    // NEW 7-HOUR RULE LOGIC
-    // We count "active sessions" (solo or being cash holder in team)
-    // But they must be separated by 7 hours to count as distinct.
+    // Calculate Active Players (Simplified for brevity)
     const playerCounts = {};
-
     players.forEach(p => {
-        // Filter sessions for this player in last 7 days
         const playerSessions = sessions.filter(s => {
             const sDate = new Date(s.timestamp.seconds * 1000);
-            const isRecent = sDate >= sevenDaysAgo;
-            const isRelevant = (s.type === 'solo' && s.playersInvolved?.[0] === p.id) || (s.type === 'team' && s.cashHolderId === p.id);
-            return isRecent && isRelevant;
-        }).sort((a,b) => a.timestamp.seconds - b.timestamp.seconds); // Sort Oldest to Newest
-
-        let count = 0;
-        let lastSessionTime = 0;
-
-        playerSessions.forEach(s => {
-            const sTime = s.timestamp.seconds * 1000;
-            // 7 Hours in milliseconds = 7 * 60 * 60 * 1000 = 25200000
-            if (sTime - lastSessionTime >= 25200000) {
-                count++;
-                lastSessionTime = sTime;
-            }
-        });
+            return sDate >= sevenDaysAgo && ((s.type === 'solo' && s.playersInvolved?.[0] === p.id) || (s.type === 'team' && s.cashHolderId === p.id));
+        }).sort((a,b) => a.timestamp.seconds - b.timestamp.seconds);
+        let count = 0; let lastSessionTime = 0;
+        playerSessions.forEach(s => { if (s.timestamp.seconds * 1000 - lastSessionTime >= 25200000) { count++; lastSessionTime = s.timestamp.seconds * 1000; } });
         playerCounts[p.id] = count;
     });
 
     const activePlayerIds = players.filter(p => p.id !== winnerId && p.role !== 'backer' && p.role !== 'investor' && (playerCounts[p.id] || 0) >= 3).map(p => p.id);
     const winnerDoc = players.find(p => p.id === winnerId);
+    let logData = { winnerId, amount, winnerPocket: 0, pinInc: 0, activePlayerIds, timestamp: serverTimestamp() };
+
     if (winnerDoc.role !== 'backer' && winnerDoc.role !== 'investor') {
-        const winnerRef = doc(db, "players", winnerId);
         const currentSurplus = winnerDoc.heldCash - winnerDoc.pinnedBankroll;
         const makeup = currentSurplus < 0 ? Math.abs(currentSurplus) : 0;
         let winnerPocket = 0; let pinInc = 0;
         if ((amount - makeup) > 0) { const profit = (amount - makeup); winnerPocket = round5(profit * 0.50); pinInc = profit - winnerPocket; }
-        const newTier = (winnerDoc.tierScore || 0) + amount;
-        const newPeak = Math.max((winnerDoc.peakScore || 0), newTier);
-        const newEarnings = (winnerDoc.lifetimeEarnings || 0) + winnerPocket;
-        await updateDoc(winnerRef, { heldCash: winnerDoc.heldCash + (amount - winnerPocket), pinnedBankroll: winnerDoc.pinnedBankroll + pinInc, tierScore: newTier, peakScore: newPeak, lifetimeEarnings: newEarnings, currentTier: getTierDetails(newPeak, winnerDoc.currentTier).level });
+        logData.winnerPocket = winnerPocket; logData.pinInc = pinInc;
+        const newTier = (winnerDoc.tierScore || 0) + amount; const newPeak = Math.max((winnerDoc.peakScore || 0), newTier);
+        await updateDoc(doc(db, "players", winnerId), { heldCash: winnerDoc.heldCash + (amount - winnerPocket), pinnedBankroll: winnerDoc.pinnedBankroll + pinInc, tierScore: newTier, peakScore: newPeak, lifetimeEarnings: (winnerDoc.lifetimeEarnings || 0) + winnerPocket, currentTier: getTierDetails(newPeak, winnerDoc.currentTier).level });
         showNotification(`Winner pocketed $${winnerPocket}`);
     } else { showNotification("Backer Win Logged"); }
+
+    const teamPayRef = await addDoc(collection(db, "teamPays"), logData);
     const batch = writeBatch(db);
-    activePlayerIds.forEach(pid => { batch.set(doc(collection(db, "pendingActions")), { targetPlayerId: pid, type: 'TEAM_PAY_DISTRIBUTION', cashAmount: otherShares, bankrollAmount: otherShares, reason: `${winnerDoc.name} hit Team Pay ($${amount})`, timestamp: serverTimestamp() }); });
+    activePlayerIds.forEach(pid => { 
+        batch.set(doc(collection(db, "pendingActions")), { targetPlayerId: pid, type: 'TEAM_PAY_DISTRIBUTION', cashAmount: otherShares, bankrollAmount: otherShares, reason: `${winnerDoc.name} hit Team Pay ($${amount})`, timestamp: serverTimestamp(), sourceTeamPayId: teamPayRef.id }); 
+    });
     await batch.commit(); setView('dashboard');
   };
 
@@ -292,47 +300,17 @@ const App = () => {
       showNotification(`Transferred $${amount} to Papi.`);
   };
 
-  const handleMachineSubmit = async (data) => { await addDoc(collection(db, "machineLogs"), { ...data, loggedBy: currentUser.name, timestamp: serverTimestamp() }); showNotification("Data Saved"); setView('dashboard'); };
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
-  const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal? Stats won't revert.")) await deleteDoc(doc(db, "withdrawals", id)); };
-  const handleClearLogs = async (type) => { if(!window.confirm(`Delete ALL ${type} logs?`)) return; const q = query(collection(db, "machineLogs"), where("machineType", "==", type)); (await getDocs(q)).forEach(d => deleteDoc(d.ref)); showNotification("Cleared."); };
-  const handleClearImports = async (type) => { 
-      if(!window.confirm(`Delete ONLY imported logs for ${type}?`)) return; 
-      const q = query(collection(db, "machineLogs"), where("machineType", "==", type), where("imported", "==", true)); 
-      const batch = writeBatch(db);
-      const snapshot = await getDocs(q);
-      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-      showNotification("Imported logs cleared."); 
-  };
-  
-  const handleGameSubmit = async (gameData) => { if (gameData.id) { await updateDoc(doc(db, "games", gameData.id), gameData); } else { await addDoc(collection(db, "games"), gameData); } showNotification("Game Saved"); };
-  const handleDeleteGame = async (id) => { if(window.confirm("Delete game info?")) await deleteDoc(doc(db, "games", id)); };
-
-  const handleBulkImport = async (type, raw) => {
-      const batch = writeBatch(db); let count = 0;
-      raw.trim().split('\n').forEach(row => {
-          const c = row.split(/\t|,/);
-          let d = { machineType: type, timestamp: serverTimestamp(), imported: true };
-          if (type === 'Phoenix Link') { d = { ...d, denom: c[0], bet: c[1], startingNum: c[2], moneyIn: c[3], moneyOut: c[4], location: c[5] }; } 
-          else if (type === 'World Cruise') { d = { ...d, denom: c[0], bet: c[1], red: c[2], purple: c[3], green: c[4], count: c[5], moneyIn: c[6], moneyOut: c[7], location: c[8] }; } 
-          else if (type === 'What the Duck') { d = { ...d, bet: c[0], explodes: c[1], bounties: c[2], moneyIn: c[3], moneyOut: c[4], location: 'Imported' }; } 
-          else if (type === 'Temple Falls') { d = { ...d, bet: c[0], count: c[1], moneyIn: c[2], moneyOut: c[3], location: 'Imported' }; }
-          const cin = parseMoney(d.moneyIn); const cout = parseMoney(d.moneyOut); const betVal = parseMoney(d.bet) || 1;
-          d.unitWin = (cout - cin) / betVal; batch.set(doc(collection(db, "machineLogs")), d); count++;
-      });
-      try { await batch.commit(); showNotification(`Imported ${count}.`); } catch(e) { alert("Import Failed"); }
-  };
 
   // --- RENDER HELPERS ---
   const renderDashboard = () => {
     if (currentUser.role === 'investor') {
       return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
     }
-if (currentUser.role === 'backer') {
+    if (currentUser.role === 'backer') {
       return (
         <OliverDashboard 
-          currentUser={currentUser}
+          currentUser={liveCurrentUser} // Passed LIVE user
           players={players}
           sessions={sessions}
           isShiftActive={!!activeShift}
@@ -343,7 +321,6 @@ if (currentUser.role === 'backer') {
           onTeamPay={() => setView('teamPay')}
           onLogMachine={() => setView('logMachine')}
           onLogTeamSession={() => setView('logTeamSession')}
-          // PASSED HANDLERS FOR HISTORY EDITING
           onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
           onDeleteSession={handleDeleteSession}
         />
@@ -351,7 +328,7 @@ if (currentUser.role === 'backer') {
     }
     return (
       <PlayerDashboard 
-        currentUser={currentUser}
+        currentUser={liveCurrentUser} // Passed LIVE user
         players={players}
         sessions={sessions}
         withdrawals={withdrawals}
@@ -363,7 +340,6 @@ if (currentUser.role === 'backer') {
         onTransfer={handleTransferToBacker}
         onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
         onDeleteSession={handleDeleteSession}
-        onDeleteWithdrawal={handleDeleteWithdrawal}
         setView={setView}
       />
     );
@@ -381,24 +357,21 @@ if (currentUser.role === 'backer') {
                 </button>
                 <h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1>
             </header>
-             
-             {/* REUSE PLAYER DASHBOARD FOR SPECTATOR */}
              <PlayerDashboard 
-                currentUser={currentUser} // Me (The Spectator)
-                viewingUser={viewingPlayer} // Him (The Player I'm watching)
+                currentUser={liveCurrentUser} 
+                viewingUser={viewingPlayer} 
                 players={players}
                 sessions={sessions}
-                withdrawals={withdrawals} // Updated to show HIS withdrawals due to useEffect
-                isShiftActive={false} // Spectators can't start shifts for others
-                onStartShift={() => {}} // Disabled
-                onTeamPay={() => {}} // Disabled
-                onLogMachine={() => {}} // Disabled
-                onCashout={() => {}} // Disabled
-                onTransfer={() => {}} // Disabled
-                onEditSession={() => {}} // Disabled
-                onDeleteSession={() => {}} // Disabled
-                onDeleteWithdrawal={() => {}} // Disabled
-                setView={() => {}} // Disabled
+                withdrawals={withdrawals} 
+                isShiftActive={false} 
+                onStartShift={() => {}} 
+                onTeamPay={() => {}} 
+                onLogMachine={() => {}} 
+                onCashout={() => {}} 
+                onTransfer={() => {}} 
+                onEditSession={() => {}} 
+                onDeleteSession={() => {}} 
+                setView={() => {}} 
             />
         </div>
       );
@@ -431,14 +404,14 @@ if (currentUser.role === 'backer') {
       {notification && <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded shadow-lg animate-bounce z-50">{notification}</div>}
       
       {/* MAIN CONTENT */}
-      <main className="max-w-4xl mx-auto">
+      <main className="max-w-4xl mx-auto pb-32">
         {view === 'dashboard' && renderDashboard()}
         {view === 'teamRoster' && <TeamRoster players={players} sessions={sessions} onViewPlayer={handleViewPlayer} />}
         
         {(view === 'logSession' || view === 'endShift' || view === 'logTeamSession') && (
            <SessionLogger 
               players={players} 
-              currentUser={currentUser} 
+              currentUser={liveCurrentUser} // Passed LIVE user for correct bankroll
               casinoOptions={casinoOptions} 
               games={games} 
               initialData={editingSession} 
@@ -450,13 +423,16 @@ if (currentUser.role === 'backer') {
         )}
 
         {view === 'teamPay' && <TeamPayLogger players={players} onSubmit={handleTeamPay} onCancel={() => setView('dashboard')} />}
-        {view === 'logMachine' && <MachineLogger onSubmit={handleMachineSubmit} onCancel={() => setView('dashboard')} />}
+        {view === 'logMachine' && <MachineLogger currentUser={liveCurrentUser} onCancel={() => setView('dashboard')} />}
         {view === 'machineAnalytics' && <MachineAnalytics logs={machineLogs} sessions={sessions} onDeleteLog={handleDeleteLog} />}
-        {view === 'playInfo' && <PlayInfo games={games} onAdd={handleGameSubmit} onEdit={handleGameSubmit} onDelete={handleDeleteGame} />}
-        {view === 'settings' && <PlayerAdmin players={players} onImport={handleBulkImport} onClear={handleClearLogs} onClearImports={handleClearImports} />}
+        {view === 'playInfo' && <PlayInfo games={games} />}
+        {view === 'settings' && <PlayerAdmin players={players} />}
       </main>
       
-      {activeShift && <ActiveShift shift={activeShift} onEnd={handleEndShift} />}
+      {activeShift && !['logSession', 'logTeamSession', 'teamPay', 'logMachine', 'playInfo'].includes(view) && (
+        <ActiveShift shift={activeShift} onEnd={handleEndShift} />
+      )}
+
       {showStartModal && <StartSessionModal casinoOptions={casinoOptions} onConfirm={handleConfirmStartShift} onCancel={() => setShowStartModal(false)} />}
     </div>
   );

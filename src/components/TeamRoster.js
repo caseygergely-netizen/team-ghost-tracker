@@ -1,10 +1,13 @@
 import React, { useMemo } from 'react';
-import { Users, TrendingUp, Radio, Calendar } from 'lucide-react';
+import { Users, TrendingUp, Radio, Calendar, Activity } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { getTierDetails, round5 } from '../utils';
 
 const TeamRoster = ({ players, sessions, onViewPlayer }) => {
     
+    // Check if ANYONE is currently live (for the top indicator)
+    const anyoneIsLive = players.some(p => p.isLive === true);
+
     // --- TEAM GRAPH DATA (LAST 30 DAYS) ---
     const teamGraphData = useMemo(() => {
         if (!sessions || sessions.length === 0) return [];
@@ -44,6 +47,20 @@ const TeamRoster = ({ players, sessions, onViewPlayer }) => {
     return (
         <div className="space-y-6">
             
+            {/* --- NEW: GLOBAL LIVE INDICATOR (AT THE VERY TOP) --- */}
+            {anyoneIsLive && (
+                <div className="w-full bg-emerald-900/30 border border-emerald-500/50 p-3 rounded-xl flex items-center justify-between animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                    <div className="flex items-center gap-3">
+                        <div className="relative">
+                            <div className="w-3 h-3 bg-emerald-500 rounded-full absolute animate-ping"></div>
+                            <div className="w-3 h-3 bg-emerald-500 rounded-full relative"></div>
+                        </div>
+                        <span className="text-emerald-400 font-bold text-sm tracking-wider">TEAM MEMBER ACTIVE</span>
+                    </div>
+                    <Activity className="text-emerald-500" size={18} />
+                </div>
+            )}
+
             {/* --- 30-DAY PROFIT GRAPH --- */}
             <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-xl">
                 <div className="flex justify-between items-end mb-4">
@@ -103,7 +120,7 @@ const TeamRoster = ({ players, sessions, onViewPlayer }) => {
                     const mySessions = sessions.filter(s => s.playersInvolved?.includes(p.id));
                     const last3 = mySessions.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)).slice(0,3);
                     
-                    // Live Status Logic (Visual placeholder until DB sync is added)
+                    // Live Status Logic
                     const isLive = p.isLive === true;
 
                     let statusLabel = "Status";
@@ -114,16 +131,16 @@ const TeamRoster = ({ players, sessions, onViewPlayer }) => {
                     return (
                         <div key={p.id} onClick={() => onViewPlayer(p)} className={`bg-gray-800 border p-4 rounded-xl cursor-pointer transition-all relative overflow-hidden ${isLive ? 'border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-gray-700 hover:border-emerald-500'}`}>
                             
-                            {/* Live Badge */}
+                            {/* Live Badge on Card */}
                             {isLive && (
-                                <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg flex items-center gap-1 animate-pulse">
-                                    <Radio size={10} /> LIVE
+                                <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl flex items-center gap-1 animate-pulse shadow-lg z-10">
+                                    <Radio size={12} className="animate-pulse" /> LIVE
                                 </div>
                             )}
 
                             <div className="flex justify-between items-start mb-3">
                                 <div className="flex gap-3 items-center">
-                                    <div className="w-12 h-12 bg-gray-700 rounded-full flex items-center justify-center text-lg font-bold text-gray-400 border border-gray-600">
+                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold border ${isLive ? 'bg-emerald-900/20 border-emerald-500 text-emerald-400' : 'bg-gray-700 border-gray-600 text-gray-400'}`}>
                                         {p.name.substring(0, 2).toUpperCase()}
                                     </div>
                                     <div>
@@ -131,7 +148,7 @@ const TeamRoster = ({ players, sessions, onViewPlayer }) => {
                                         <span className={`px-2 py-0.5 rounded text-xs font-bold ${tier.color} ${tier.text}`}>{tier.name}</span>
                                     </div>
                                 </div>
-                                <div className="text-right">
+                                <div className="text-right pt-2">
                                     <div className="text-xs text-gray-500">Hourly</div>
                                     <div className="font-bold text-white">${Math.round(hourly)}/hr</div>
                                 </div>

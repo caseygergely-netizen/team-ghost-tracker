@@ -10,13 +10,26 @@ const PapiDashboard = ({ players, sessions, withdrawals }) => {
   // Filter withdrawals where method is "Investor Payout" or "Transfer from Oliver"
   const transfers = withdrawals.filter(w => w.method === 'Transfer from Oliver' || w.method === 'Investor Payout');
 
-  // Prepare graph data (Cumulative Team Profit)
+  // Prepare graph data (Cumulative PROFIT SHARE)
+  // CHANGED: Now only counts sessions where Papi was actually involved
   const graphData = useMemo(() => {
     let runningTotal = 0;
-    // Filter for valid sessions, reverse to show oldest first
-    return [...sessions].reverse().map(s => {
-      runningTotal += s.totalProfit;
-      return { date: new Date(s.timestamp?.seconds * 1000).toLocaleDateString(), profit: runningTotal };
+    
+    // 1. Sort oldest to newest
+    // 2. Filter for only sessions where Papi had a stake
+    const relevantSessions = [...sessions]
+        .sort((a,b) => a.timestamp.seconds - b.timestamp.seconds)
+        .filter(s => s.papiBacked || s.isLegacy); 
+
+    return relevantSessions.map(s => {
+      // Calculate Papi's cut for this specific session
+      const cut = s.papiBacked ? (s.totalProfit * 0.50) : (s.totalProfit); 
+      
+      runningTotal += cut;
+      return { 
+          date: new Date(s.timestamp?.seconds * 1000).toLocaleDateString(), 
+          profit: runningTotal 
+      };
     });
   }, [sessions]);
 
@@ -32,14 +45,14 @@ const PapiDashboard = ({ players, sessions, withdrawals }) => {
 
       {/* GRAPH */}
       <div className="bg-gray-800 p-6 rounded-xl border border-gray-700">
-        <h3 className="text-gray-400 mb-4 font-bold flex items-center gap-2"><TrendingUp size={16}/> Team Performance</h3>
+        <h3 className="text-gray-400 mb-4 font-bold flex items-center gap-2"><TrendingUp size={16}/> Investment Growth</h3>
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={graphData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis dataKey="date" stroke="#9CA3AF" hide />
               <YAxis stroke="#9CA3AF" />
-              <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none' }} />
+              <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none' }} itemStyle={{ color: '#10B981' }}/>
               <Line type="monotone" dataKey="profit" stroke="#10B981" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>

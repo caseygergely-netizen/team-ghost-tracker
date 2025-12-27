@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Database, Trash2, Filter, BarChart, Clock, MapPin, Calendar, Info, X } from 'lucide-react';
-import { calculateSD } from '../utils';
+import { Database, Trash2, Filter, BarChart, MapPin, Calendar, Info, X, TrendingUp } from 'lucide-react';
+import { calculateSD } from '../utils'; // Ensure you have this helper or remove sd calculation if unused
 import { BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const MachineAnalytics = ({ logs, sessions, onDeleteLog }) => {
@@ -8,7 +8,7 @@ const MachineAnalytics = ({ logs, sessions, onDeleteLog }) => {
     
     // --- SESSION FILTER STATE ---
     const [selectedCasino, setSelectedCasino] = useState('All');
-    const [selectedCell, setSelectedCell] = useState(null); // NEW: Track clicked cell
+    const [selectedCell, setSelectedCell] = useState(null); // Track clicked cell
 
     // --- MACHINE DATA STATE ---
     const [type, setType] = useState('Phoenix Link');
@@ -23,7 +23,7 @@ const MachineAnalytics = ({ logs, sessions, onDeleteLog }) => {
 
     // --- 1. EXTRACT CASINO LIST ---
     const casinoList = useMemo(() => {
-        if (!sessions) return [];
+        if (!sessions) return ['All'];
         const uniqueCasinos = [...new Set(sessions.map(s => s.casino?.trim()))].filter(Boolean).sort();
         return ['All', ...uniqueCasinos];
     }, [sessions]);
@@ -71,7 +71,7 @@ const MachineAnalytics = ({ logs, sessions, onDeleteLog }) => {
     };
 
     // --- MACHINE FILTER LOGIC ---
-    const filteredLogs = logs.filter(l => {
+    const filteredLogs = (logs || []).filter(l => {
         if (l.machineType !== type) return false;
         if (type === 'What the Duck') {
             const exp = parseFloat(l.explodes) || 0;
@@ -95,7 +95,9 @@ const MachineAnalytics = ({ logs, sessions, onDeleteLog }) => {
 
     const count = filteredLogs.length;
     const avgUnitWin = count > 0 ? filteredLogs.reduce((a,b) => a + (parseFloat(b.unitWin)||0), 0) / count : 0;
-    const sd = calculateSD(filteredLogs, 'unitWin');
+    
+    // Simple SD calc if helper missing
+    const sd = calculateSD ? calculateSD(filteredLogs, 'unitWin') : 0; 
 
     const renderMachineTab = () => {
         const getDynamicHeaders = () => {
