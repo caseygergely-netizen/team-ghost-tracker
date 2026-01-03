@@ -1,13 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { 
-  CheckCircle, ArrowRightLeft, DollarSign, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users 
+  CheckCircle, ArrowRightLeft, DollarSign, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users, Gift 
 } from 'lucide-react';
-import { getTierDetails, round5 } from '../utils';
+import { getTierDetails, round5, getPreviousWeekRange } from '../utils';
 
 const PlayerDashboard = ({ 
   currentUser, viewingUser, players, sessions, withdrawals, isShiftActive,
-  onStartShift, onTeamPay, onLogMachine, onCashout, onTransfer, 
+  onStartShift, onTeamPay, onLogMachine, onCashout, onTransfer, onClaimBonus, // <--- Added onClaimBonus prop
   onEditSession, onDeleteSession, onDeleteWithdrawal, setView 
 }) => {
   
@@ -27,6 +27,38 @@ const PlayerDashboard = ({
   const backerShare = surplus - playerShare;
 
   let statusLabel = surplus > 0 ? "Current Profit" : (surplus < 0 ? "Current Makeup" : "Current Status");
+
+  // --- WEEKLY BONUS LOGIC (New Feature) ---
+  const bonusData = useMemo(() => {
+      const { start, end, id } = getPreviousWeekRange();
+      
+      // 1. Filter sessions: Last Week AND Solo ONLY
+      const weeklySessions = sessions.filter(s => {
+          if (!s.playersInvolved?.includes(targetUser.id)) return false;
+          const sDate = new Date(s.timestamp?.seconds * 1000);
+          // Check date range
+          const inRange = sDate >= start && sDate <= end;
+          // Check SOLO only (Team Plays don't count)
+          const isSolo = s.type === 'solo' || (!s.type && s.playersInvolved.length === 1);
+          return inRange && isSolo;
+      });
+
+      // 2. Calculate Stats
+      const weeklyProfit = weeklySessions.reduce((acc, s) => acc + (parseFloat(s.totalProfit) || 0), 0);
+      const sessionCount = weeklySessions.length;
+      const bonusAmount = round5(weeklyProfit * 0.15);
+
+      // 3. Determine Eligibility Reason
+      let isEligible = true;
+      let reason = "Eligible";
+
+      if (surplus > -3000) { isEligible = false; reason = "Makeup under $3k"; }
+      else if (sessionCount < 3) { isEligible = false; reason = `Need 3 Solo Runs (Did ${sessionCount})`; }
+      else if (weeklyProfit <= 0) { isEligible = false; reason = "No Net Profit"; }
+      else if (myStats.lastBonusClaimDate === id) { isEligible = false; reason = "Already Claimed"; }
+
+      return { isEligible, reason, bonusAmount, sessionCount, weeklyProfit, weekId: id };
+  }, [sessions, targetUser.id, surplus, myStats.lastBonusClaimDate]);
 
   // Graph Data
   const chartData = useMemo(() => {
@@ -105,20 +137,42 @@ const PlayerDashboard = ({
         
         {/* ACTION BUTTONS (Hide if Spectating) */}
         {!isSpectator && (
-            <div className="mt-6 border-t border-gray-700 pt-4 flex gap-2">
-                {surplus > 0 ? (
-                    <button onClick={() => setShowSettleModal(true)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><CheckCircle size={20} /> Settle Up</button>
-                ) : surplus === 0 ? (
-                    <div className="flex-1 bg-gray-800 border border-emerald-900/30 text-emerald-500 py-3 rounded-lg text-center text-sm flex items-center justify-center font-bold">Even. Go get it! 🚀</div>
-                ) : (
-                    <div className="flex-1 bg-gray-800 border border-red-900/50 text-gray-400 py-3 rounded-lg text-center text-sm flex items-center justify-center">In Makeup</div>
-                )}
-                <button onClick={() => setShowTransferModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded-lg flex items-center justify-center"><ArrowRightLeft size={20} /></button>
+            <div className="mt-6 border-t border-gray-700 pt-4 flex flex-col gap-2">
+                {/* Standard Cashout/Transfer */}
+                <div className="flex gap-2">
+                    {surplus > 0 ? (
+                        <button onClick={() => setShowSettleModal(true)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><CheckCircle size={20} /> Settle Up</button>
+                    ) : surplus === 0 ? (
+                        <div className="flex-1 bg-gray-800 border border-emerald-900/30 text-emerald-500 py-3 rounded-lg text-center text-sm flex items-center justify-center font-bold">Even. Go get it! 🚀</div>
+                    ) : (
+                        <div className="flex-1 bg-gray-800 border border-red-900/50 text-gray-400 py-3 rounded-lg text-center text-sm flex items-center justify-center">In Makeup</div>
+                    )}
+                    <button onClick={() => setShowTransferModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded-lg flex items-center justify-center"><ArrowRightLeft size={20} /></button>
+                </div>
+
+                {/* --- NEW: WEEKLY BONUS BUTTON --- */}
+                <button 
+                    onClick={() => {
+                        if (bonusData.isEligible && window.confirm(`Claim Weekly Bonus of $${bonusData.bonusAmount}? This will reduce your Held Cash and Debt.`)) {
+                            onClaimBonus(bonusData.bonusAmount, bonusData.weekId);
+                        }
+                    }}
+                    disabled={!bonusData.isEligible}
+                    className={`w-full py-3 rounded-lg flex items-center justify-center gap-2 font-bold border transition-all ${bonusData.isEligible 
+                        ? 'bg-purple-600 hover:bg-purple-500 border-purple-400 text-white shadow-[0_0_15px_rgba(168,85,247,0.3)]' 
+                        : 'bg-gray-800 border-gray-700 text-gray-500 cursor-not-allowed opacity-60'}`}
+                >
+                    <Gift size={20} className={bonusData.isEligible ? "animate-bounce" : ""} />
+                    {bonusData.isEligible 
+                        ? `Claim Weekly Rebate: $${bonusData.bonusAmount}` 
+                        : `Weekly Bonus: ${bonusData.reason}`
+                    }
+                </button>
             </div>
         )}
       </div>
 
-      {/* --- RECENT WITHDRAWALS (Restored!) --- */}
+      {/* --- RECENT WITHDRAWALS --- */}
       {withdrawals && withdrawals.length > 0 && (
           <div className="bg-gray-800/50 p-3 rounded border border-gray-700">
               <h4 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1"><History size={12}/> Recent Withdrawals</h4>

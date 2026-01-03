@@ -14,12 +14,33 @@ export const calculateSD = (data, key) => {
     return Math.sqrt(variance);
 };
 
-export const getLocalDate = () => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+// FIX: Ensure dates are handled in local time, not UTC
+export const getLocalDate = (dateObj = new Date()) => {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+};
+
+// NEW: Get the start (Mon) and end (Sun) of the PREVIOUS week
+export const getPreviousWeekRange = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 (Sun) - 6 (Sat)
+    
+    // Calculate how many days to go back to get to LAST Monday
+    // If today is Mon (1), go back 7 days. If Sun (0), go back 6 days.
+    const daysToLastMonday = dayOfWeek === 0 ? 6 : (dayOfWeek - 1) + 7;
+    const daysToLastSunday = daysToLastMonday - 6;
+
+    const start = new Date(today);
+    start.setDate(today.getDate() - daysToLastMonday);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(today);
+    end.setDate(today.getDate() - daysToLastSunday);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end, id: getLocalDate(start) }; // ID used to track claims
 };
 
 export const getTierDetails = (tierScore, currentTierLevel = 0) => {

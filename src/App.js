@@ -5,7 +5,7 @@ import {
   serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, limit 
 } from 'firebase/firestore';
 import { 
-  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft
+  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft 
 } from 'lucide-react';
 
 // --- IMPORT COMPONENTS ---
@@ -51,7 +51,7 @@ const App = () => {
       else localStorage.removeItem('activeShift');
   }, [activeShift]);
 
-  // --- LIVE USER FIX ---
+  // --- LIVE USER FIX: Always get the latest version from the players array ---
   const liveCurrentUser = useMemo(() => {
       if (!currentUser) return null;
       return players.find(p => p.id === currentUser.id) || currentUser;
@@ -103,10 +103,23 @@ const App = () => {
 
   const handleStartShiftClick = () => { setShowStartModal(true); };
   
-  const handleConfirmStartShift = async (casino) => {
-    setActiveShift({ casino, startTime: new Date().toISOString() });
+  // --- UPDATED: START SHIFT (Saves Freelance Data) ---
+  const handleConfirmStartShift = async (startData) => {
+    // startData contains { casino, isFreelance, backerPercent }
+    const shiftState = { 
+        ...startData, 
+        startTime: new Date().toISOString() 
+    };
+    
+    setActiveShift(shiftState);
     setShowStartModal(false);
-    if (currentUser) await updateDoc(doc(db, "players", currentUser.id), { isLive: true, currentCasino: casino });
+    
+    if (currentUser) {
+        await updateDoc(doc(db, "players", currentUser.id), { 
+            isLive: true, 
+            currentCasino: startData.casino 
+        });
+    }
     showNotification("Shift Started! You are now visible online.");
   };
 
@@ -122,12 +135,18 @@ const App = () => {
       }
   };
 
+  // --- UPDATED: SESSION SUBMIT (Handles Freelance Logic) ---
   const handleSessionSubmit = async (data) => {
-    let { totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, sessionTimestamp, sessionId, isLegacy, papiBacked, startAmount, endAmount } = data;
+    let { 
+        totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, 
+        sessionTimestamp, sessionId, isLegacy, papiBacked, startAmount, endAmount,
+        // NEW: Grab freelance data
+        isFreelance, backerPercent 
+    } = data;
     
     if (sessionId) await revertSessionMath(sessionId);
 
-    // Shift Logic (Exclusion Rule + Live Status)
+    // 1. SHIFT LOGIC (Exclusion Rule + Live Status)
     if (activeShift && !sessionId && (!selectedPlayerIds || (selectedPlayerIds.length === 1 && !papiBacked))) {
        const shiftStart = new Date(activeShift.startTime);
        const sessionsDuringShift = sessions.filter(s => {
@@ -144,6 +163,54 @@ const App = () => {
        await updateDoc(doc(db, "players", currentUser.id), { isLive: false, currentCasino: null });
     }
 
+    // --- 2. FREELANCE BRANCH ---
+    if (isFreelance) {
+        const cutAmount = round5(totalProfit * (backerPercent / 100));
+        
+        // A. Log the Session (For Analytics ONLY - No Stat Updates)
+        const sessionData = { 
+            timestamp: sessionTimestamp, 
+            createdAt: serverTimestamp(), 
+            casino, 
+            game: 'Freelance', 
+            duration, 
+            totalProfit, 
+            playersInvolved: [currentUser.id], 
+            type: 'freelance', 
+            backerPercent,
+            backerCut: cutAmount
+        };
+        await addDoc(collection(db, "sessions"), sessionData);
+
+        // B. Log the Settlement (The "Paper Trail")
+        await addDoc(collection(db, "withdrawals"), {
+            playerId: currentUser.id,
+            amount: cutAmount,
+            method: `Freelance Cut (${backerPercent}%) - ${casino}`,
+            timestamp: serverTimestamp(),
+            isFreelanceSettlement: true
+        });
+
+        // C. Trigger WhatsApp
+        const phoneNumber = "17787004641"; // <--- REPLACE WITH BACKER NUMBER
+        let msg = "";
+        if (totalProfit >= 0) {
+            msg = `Freelance Update: I sold you ${backerPercent}% at ${casino}. Profit: $${totalProfit}. I am etransferring you $${cutAmount}.`;
+        } else {
+            msg = `Freelance Update: I sold you ${backerPercent}% at ${casino}. Loss: $${totalProfit}. Please etransfer me $${Math.abs(cutAmount)}.`;
+        }
+        window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(msg)}`, '_blank');
+
+        showNotification("Freelance Session Logged. Opening WhatsApp...");
+        
+        // Reset View
+        if (view === 'endShift' || activeShift) setActiveShift(null);
+        setEditingSession(null); 
+        setView('dashboard');
+        return; // <--- STOP HERE (Don't run standard stat updates)
+    }
+
+    // --- 3. LEGACY TEAM LOGIC ---
     const updates = [];
     if (!isLegacy) {
         let effectiveTeamProfit = totalProfit; let papiCut = 0;
@@ -199,6 +266,8 @@ const App = () => {
   const revertSessionMath = async (sessionId) => {
     const sessionDoc = sessions.find(s => s.id === sessionId);
     if (!sessionDoc || sessionDoc.isLegacy) return;
+    if (sessionDoc.type === 'freelance') return; // Do not revert stats for freelance
+
     if (sessionDoc.papiBacked) {
         const papiCut = sessionDoc.totalProfit * 0.50;
         const papiDoc = (await getDocs(query(collection(db, "players"), where("role", "==", "investor")))).docs[0];
@@ -230,8 +299,6 @@ const App = () => {
     const { winnerId, amount } = data;
     const otherShares = round5(amount * 0.035);
     const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    
-    // Calculate Active Players (Simplified for brevity)
     const playerCounts = {};
     players.forEach(p => {
         const playerSessions = sessions.filter(s => {
@@ -242,11 +309,9 @@ const App = () => {
         playerSessions.forEach(s => { if (s.timestamp.seconds * 1000 - lastSessionTime >= 25200000) { count++; lastSessionTime = s.timestamp.seconds * 1000; } });
         playerCounts[p.id] = count;
     });
-
     const activePlayerIds = players.filter(p => p.id !== winnerId && p.role !== 'backer' && p.role !== 'investor' && (playerCounts[p.id] || 0) >= 3).map(p => p.id);
     const winnerDoc = players.find(p => p.id === winnerId);
     let logData = { winnerId, amount, winnerPocket: 0, pinInc: 0, activePlayerIds, timestamp: serverTimestamp() };
-
     if (winnerDoc.role !== 'backer' && winnerDoc.role !== 'investor') {
         const currentSurplus = winnerDoc.heldCash - winnerDoc.pinnedBankroll;
         const makeup = currentSurplus < 0 ? Math.abs(currentSurplus) : 0;
@@ -257,12 +322,9 @@ const App = () => {
         await updateDoc(doc(db, "players", winnerId), { heldCash: winnerDoc.heldCash + (amount - winnerPocket), pinnedBankroll: winnerDoc.pinnedBankroll + pinInc, tierScore: newTier, peakScore: newPeak, lifetimeEarnings: (winnerDoc.lifetimeEarnings || 0) + winnerPocket, currentTier: getTierDetails(newPeak, winnerDoc.currentTier).level });
         showNotification(`Winner pocketed $${winnerPocket}`);
     } else { showNotification("Backer Win Logged"); }
-
     const teamPayRef = await addDoc(collection(db, "teamPays"), logData);
     const batch = writeBatch(db);
-    activePlayerIds.forEach(pid => { 
-        batch.set(doc(collection(db, "pendingActions")), { targetPlayerId: pid, type: 'TEAM_PAY_DISTRIBUTION', cashAmount: otherShares, bankrollAmount: otherShares, reason: `${winnerDoc.name} hit Team Pay ($${amount})`, timestamp: serverTimestamp(), sourceTeamPayId: teamPayRef.id }); 
-    });
+    activePlayerIds.forEach(pid => { batch.set(doc(collection(db, "pendingActions")), { targetPlayerId: pid, type: 'TEAM_PAY_DISTRIBUTION', cashAmount: otherShares, bankrollAmount: otherShares, reason: `${winnerDoc.name} hit Team Pay ($${amount})`, timestamp: serverTimestamp(), sourceTeamPayId: teamPayRef.id }); });
     await batch.commit(); setView('dashboard');
   };
 
@@ -276,16 +338,17 @@ const App = () => {
 
   const handleSettleUp = async (playerCut, backerCut) => {
       if(!currentUser) return;
-      const me = (await getDocs(collection(db, "players"))).docs.find(d => d.id === currentUser.id).data();
-      await updateDoc(doc(db, "players", currentUser.id), { heldCash: me.heldCash - playerCut, pinnedBankroll: me.pinnedBankroll + backerCut });
+      await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - playerCut, pinnedBankroll: currentUser.pinnedBankroll + backerCut });
       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: playerCut, method: "Settle Up", timestamp: serverTimestamp() });
       showNotification(`Settled! Took $${playerCut}`);
+      
+      const phoneNumber = "17787004641"; // <--- BACKER NUMBER
+      window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I just settled up. Please etransfer me $${playerCut}.`)}`, '_blank');
   };
   
   const handleTransferToBacker = async (amount) => {
       if (!currentUser) return;
-      const me = (await getDocs(collection(db, "players"))).docs.find(d => d.id === currentUser.id).data();
-      await updateDoc(doc(db, "players", currentUser.id), { heldCash: me.heldCash - amount, pinnedBankroll: me.pinnedBankroll - amount });
+      await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - amount, pinnedBankroll: currentUser.pinnedBankroll - amount });
       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: amount, method: "Transfer to Backer", timestamp: serverTimestamp() });
       showNotification(`Transferred $${amount}`);
   };
@@ -299,6 +362,29 @@ const App = () => {
       showNotification(`Transferred $${amount} to Papi.`);
   };
 
+  const handleClaimBonus = async (amount, weekId) => {
+      if (!currentUser) return;
+      const me = players.find(p => p.id === currentUser.id) || currentUser;
+      
+      await updateDoc(doc(db, "players", currentUser.id), { 
+          heldCash: me.heldCash - amount, 
+          pinnedBankroll: me.pinnedBankroll - amount,
+          lastBonusClaimDate: weekId 
+      });
+
+      await addDoc(collection(db, "withdrawals"), { 
+          playerId: currentUser.id, 
+          amount: amount, 
+          method: "Weekly Rebate Bonus", 
+          timestamp: serverTimestamp() 
+      });
+
+      showNotification(`Bonus Claimed! You pocketed $${amount}.`);
+      
+      const phoneNumber = "17787004641"; // <--- BACKER NUMBER
+      window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I claimed my weekly bonus of $${amount}. Please etransfer.`)}`, '_blank');
+  };
+
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
   const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal? Stats won't revert.")) await deleteDoc(doc(db, "withdrawals", id)); };
 
@@ -310,7 +396,7 @@ const App = () => {
     if (currentUser.role === 'backer') {
       return (
         <OliverDashboard 
-          currentUser={liveCurrentUser} // Passed LIVE user
+          currentUser={liveCurrentUser}
           players={players}
           sessions={sessions}
           isShiftActive={!!activeShift}
@@ -323,12 +409,14 @@ const App = () => {
           onLogTeamSession={() => setView('logTeamSession')}
           onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
           onDeleteSession={handleDeleteSession}
+          onDeleteWithdrawal={handleDeleteWithdrawal}
+          onClaimBonus={handleClaimBonus}
         />
       );
     }
     return (
       <PlayerDashboard 
-        currentUser={liveCurrentUser} // Passed LIVE user
+        currentUser={liveCurrentUser}
         players={players}
         sessions={sessions}
         withdrawals={withdrawals}
@@ -338,6 +426,7 @@ const App = () => {
         onLogMachine={() => setView('logMachine')}
         onCashout={handleSettleUp}
         onTransfer={handleTransferToBacker}
+        onClaimBonus={handleClaimBonus}
         onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
         onDeleteSession={handleDeleteSession}
         onDeleteWithdrawal={handleDeleteWithdrawal}
@@ -370,6 +459,7 @@ const App = () => {
                 onLogMachine={() => {}} 
                 onCashout={() => {}} 
                 onTransfer={() => {}} 
+                onClaimBonus={() => {}} 
                 onEditSession={() => {}} 
                 onDeleteSession={() => {}} 
                 onDeleteWithdrawal={() => {}} 
@@ -387,10 +477,8 @@ const App = () => {
           <h1 className="text-xl font-bold text-emerald-400 tracking-wider">TEAM GHOST</h1>
           <p className="text-xs text-gray-400">Player: <span className="text-white font-bold">{currentUser?.name}</span></p>
         </div>
-        
         <div className="flex gap-2">
           <button onClick={() => setView('dashboard')} className={`p-2 rounded ${view === 'dashboard' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Activity size={20}/></button>
-          
           {currentUser.role !== 'investor' && (
             <>
               <button onClick={() => setView('machineAnalytics')} className={`p-2 rounded ${view === 'machineAnalytics' ? 'bg-purple-600' : 'bg-gray-800'}`}><BarChart2 size={20}/></button>
@@ -398,44 +486,39 @@ const App = () => {
               <button onClick={() => setView('settings')} className={`p-2 rounded ${view === 'settings' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Settings size={20}/></button>
             </>
           )}
-          
           <button onClick={handleLogout} className="p-2 rounded bg-red-900/50 text-red-400 ml-2"><LogOut size={20}/></button>
         </div>
       </header>
-      
       {notification && <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded shadow-lg animate-bounce z-50">{notification}</div>}
-      
-      {/* MAIN CONTENT */}
       <main className="max-w-4xl mx-auto pb-32">
         {view === 'dashboard' && renderDashboard()}
         {view === 'teamRoster' && <TeamRoster players={players} sessions={sessions} onViewPlayer={handleViewPlayer} />}
-        
         {(view === 'logSession' || view === 'endShift' || view === 'logTeamSession') && (
            <SessionLogger 
               players={players} 
-              currentUser={liveCurrentUser} // Passed LIVE user for correct bankroll
+              currentUser={liveCurrentUser} 
               casinoOptions={casinoOptions} 
               games={games} 
               initialData={editingSession} 
               activeShiftData={activeShift} 
-              // FIX: Correctly detect if we are editing a solo session vs team session
-              mode={(view === 'endShift' || (editingSession && editingSession.type === 'solo')) ? 'shift' : 'team'}
+              // CORRECTED MODE LOGIC
+              mode={(
+                  view === 'endShift' || 
+                  (editingSession && (editingSession.type === 'solo' || (!editingSession.type && editingSession.playersInvolved?.length === 1)))
+              ) ? 'shift' : 'team'}
               onSubmit={handleSessionSubmit} 
               onCancel={() => { setEditingSession(null); setView('dashboard'); }} 
             />
         )}
-
         {view === 'teamPay' && <TeamPayLogger players={players} onSubmit={handleTeamPay} onCancel={() => setView('dashboard')} />}
         {view === 'logMachine' && <MachineLogger currentUser={liveCurrentUser} onCancel={() => setView('dashboard')} />}
         {view === 'machineAnalytics' && <MachineAnalytics logs={machineLogs} sessions={sessions} onDeleteLog={handleDeleteLog} />}
         {view === 'playInfo' && <PlayInfo games={games} />}
         {view === 'settings' && <PlayerAdmin players={players} />}
       </main>
-      
       {activeShift && !['logSession', 'logTeamSession', 'teamPay', 'logMachine', 'playInfo'].includes(view) && (
         <ActiveShift shift={activeShift} onEnd={handleEndShift} />
       )}
-
       {showStartModal && <StartSessionModal casinoOptions={casinoOptions} onConfirm={handleConfirmStartShift} onCancel={() => setShowStartModal(false)} />}
     </div>
   );
