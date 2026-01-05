@@ -5,14 +5,13 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
   const [casino, setCasino] = useState('');
   const [showList, setShowList] = useState(false);
   
-  // NEW: Freelance State
-  const [isFreelance, setIsFreelance] = useState(false);
-  const [backerPercent, setBackerPercent] = useState(50);
+  // NEW DEFAULTS: Freelance ON, 25% Cut
+  const [isFreelance, setIsFreelance] = useState(true);
+  const [backerPercent, setBackerPercent] = useState(25);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (casino.trim()) {
-        // Pass all start data as an object
         onConfirm({ 
             casino, 
             isFreelance, 
@@ -21,7 +20,6 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
     }
   };
 
-  // Filter options based on typing
   const filteredOptions = casinoOptions.filter(c => 
     c.toLowerCase().includes(casino.toLowerCase())
   ).slice(0, 5);
@@ -38,7 +36,6 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           
-          {/* CASINO INPUT */}
           <div className="relative">
             <label className="block text-sm text-gray-400 mb-2">Casino Name</label>
             <input 
@@ -51,16 +48,10 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
               onBlur={() => setTimeout(() => setShowList(false), 200)}
               autoFocus
             />
-            
             {showList && filteredOptions.length > 0 && (
               <div className="absolute z-10 w-full bg-gray-800 border border-gray-600 rounded-b-lg mt-1 shadow-xl overflow-hidden">
                 {filteredOptions.map((c) => (
-                  <button 
-                    key={c} 
-                    type="button" 
-                    onClick={() => setCasino(c)} 
-                    className="w-full text-left px-4 py-3 hover:bg-gray-700 text-gray-300 border-b border-gray-700 last:border-0"
-                  >
+                  <button key={c} type="button" onClick={() => setCasino(c)} className="w-full text-left px-4 py-3 hover:bg-gray-700 text-gray-300 border-b border-gray-700 last:border-0">
                     {c}
                   </button>
                 ))}
@@ -68,39 +59,24 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
             )}
           </div>
 
-          {/* FREELANCE TOGGLE */}
           <div className="bg-gray-900 p-3 rounded-lg border border-gray-700">
               <div className="flex items-center justify-between mb-2">
                   <label className="text-sm font-bold text-white flex items-center gap-2">
                       <Briefcase size={16} className={isFreelance ? "text-blue-400" : "text-gray-500"} />
                       Freelance Session?
                   </label>
-                  <input 
-                      type="checkbox" 
-                      className="w-5 h-5 accent-blue-500"
-                      checked={isFreelance}
-                      onChange={e => setIsFreelance(e.target.checked)}
-                  />
+                  <input type="checkbox" className="w-5 h-5 accent-blue-500" checked={isFreelance} onChange={e => setIsFreelance(e.target.checked)} />
               </div>
               
               {isFreelance && (
                   <div className="pt-2 border-t border-gray-700">
                       <label className="block text-xs text-blue-300 mb-1">Backer Cut (%)</label>
-                      <input 
-                          type="number" 
-                          className="w-full bg-gray-800 border border-blue-500/50 rounded p-2 text-white font-bold text-center"
-                          value={backerPercent}
-                          onChange={e => setBackerPercent(e.target.value)}
-                      />
+                      <input type="number" className="w-full bg-gray-800 border border-blue-500/50 rounded p-2 text-white font-bold text-center" value={backerPercent} onChange={e => setBackerPercent(e.target.value)} />
                   </div>
               )}
           </div>
 
-          <button 
-            type="submit" 
-            disabled={!casino.trim()}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-lg flex items-center justify-center gap-2 transition-all"
-          >
+          <button type="submit" disabled={!casino.trim()} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-lg flex items-center justify-center gap-2 transition-all">
             <Play fill="currentColor" /> START TIMER
           </button>
         </form>

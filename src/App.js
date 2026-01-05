@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from './firebase';
 import { 
   collection, onSnapshot, doc, updateDoc, addDoc, 
-  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, limit 
+  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, limit, getDoc 
 } from 'firebase/firestore';
 import { 
-  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft 
+  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft
 } from 'lucide-react';
 
 // --- IMPORT COMPONENTS ---
@@ -135,18 +135,17 @@ const App = () => {
       }
   };
 
-  // --- UPDATED: SESSION SUBMIT (Handles Freelance Logic) ---
+  // --- UPDATED: SESSION SUBMIT (Handles Freelance TAB) ---
   const handleSessionSubmit = async (data) => {
     let { 
         totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, 
         sessionTimestamp, sessionId, isLegacy, papiBacked, startAmount, endAmount,
-        // NEW: Grab freelance data
         isFreelance, backerPercent 
     } = data;
     
     if (sessionId) await revertSessionMath(sessionId);
 
-    // 1. SHIFT LOGIC (Exclusion Rule + Live Status)
+    // 1. SHIFT EXCLUSION LOGIC
     if (activeShift && !sessionId && (!selectedPlayerIds || (selectedPlayerIds.length === 1 && !papiBacked))) {
        const shiftStart = new Date(activeShift.startTime);
        const sessionsDuringShift = sessions.filter(s => {
@@ -163,11 +162,11 @@ const App = () => {
        await updateDoc(doc(db, "players", currentUser.id), { isLive: false, currentCasino: null });
     }
 
-    // --- 2. FREELANCE BRANCH ---
+    // --- 2. FREELANCE BRANCH (UPDATED FOR TAB) ---
     if (isFreelance) {
         const cutAmount = round5(totalProfit * (backerPercent / 100));
         
-        // A. Log the Session (For Analytics ONLY - No Stat Updates)
+        // A. Log the Session (Stats)
         const sessionData = { 
             timestamp: sessionTimestamp, 
             createdAt: serverTimestamp(), 
@@ -182,32 +181,22 @@ const App = () => {
         };
         await addDoc(collection(db, "sessions"), sessionData);
 
-        // B. Log the Settlement (The "Paper Trail")
-        await addDoc(collection(db, "withdrawals"), {
-            playerId: currentUser.id,
-            amount: cutAmount,
-            method: `Freelance Cut (${backerPercent}%) - ${casino}`,
-            timestamp: serverTimestamp(),
-            isFreelanceSettlement: true
+        // B. Update the Running Tab (freelanceDebt)
+        // Note: cutAmount is positive on WIN (owe backer), negative on LOSS (backer owes me)
+        const me = players.find(p => p.id === currentUser.id) || currentUser;
+        const currentTab = me.freelanceDebt || 0;
+        
+        await updateDoc(doc(db, "players", currentUser.id), { 
+            freelanceDebt: currentTab + cutAmount
         });
 
-        // C. Trigger WhatsApp
-        const phoneNumber = "17787004641"; // <--- REPLACE WITH BACKER NUMBER
-        let msg = "";
-        if (totalProfit >= 0) {
-            msg = `Freelance Update: I sold you ${backerPercent}% at ${casino}. Profit: $${totalProfit}. I am etransferring you $${cutAmount}.`;
-        } else {
-            msg = `Freelance Update: I sold you ${backerPercent}% at ${casino}. Loss: $${totalProfit}. Please etransfer me $${Math.abs(cutAmount)}.`;
-        }
-        window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(msg)}`, '_blank');
-
-        showNotification("Freelance Session Logged. Opening WhatsApp...");
+        showNotification(`Freelance Session Logged. Tab updated by $${cutAmount}.`);
         
         // Reset View
         if (view === 'endShift' || activeShift) setActiveShift(null);
         setEditingSession(null); 
         setView('dashboard');
-        return; // <--- STOP HERE (Don't run standard stat updates)
+        return; // STOP HERE
     }
 
     // --- 3. LEGACY TEAM LOGIC ---
@@ -263,11 +252,20 @@ const App = () => {
     } catch (e) { showNotification("Error logging session"); }
   };
 
+  // --- REVERT LOGIC (Updated for Freelance Tab) ---
   const revertSessionMath = async (sessionId) => {
     const sessionDoc = sessions.find(s => s.id === sessionId);
     if (!sessionDoc || sessionDoc.isLegacy) return;
-    if (sessionDoc.type === 'freelance') return; // Do not revert stats for freelance
+    
+    // FREELANCE REVERT: Reverse the amount from the tab
+    if (sessionDoc.type === 'freelance') {
+        const playerDoc = await getDoc(doc(db, "players", sessionDoc.playersInvolved[0]));
+        const currentTab = playerDoc.data().freelanceDebt || 0;
+        await updateDoc(playerDoc.ref, { freelanceDebt: currentTab - sessionDoc.backerCut });
+        return;
+    }
 
+    // LEGACY REVERT
     if (sessionDoc.papiBacked) {
         const papiCut = sessionDoc.totalProfit * 0.50;
         const papiDoc = (await getDocs(query(collection(db, "players"), where("role", "==", "investor")))).docs[0];
@@ -381,8 +379,40 @@ const App = () => {
 
       showNotification(`Bonus Claimed! You pocketed $${amount}.`);
       
-      const phoneNumber = "17787004641"; // <--- BACKER NUMBER
+      const phoneNumber = "17787004641"; 
       window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I claimed my weekly bonus of $${amount}. Please etransfer.`)}`, '_blank');
+  };
+
+  // --- NEW: SETTLE FREELANCE TAB ---
+  const handleSettleFreelanceTab = async () => {
+      if (!currentUser) return;
+      const me = players.find(p => p.id === currentUser.id) || currentUser;
+      const amount = me.freelanceDebt || 0;
+      
+      if (amount === 0) return;
+
+      // 1. Reset Tab
+      await updateDoc(doc(db, "players", currentUser.id), { freelanceDebt: 0 });
+
+      // 2. Log Record
+      await addDoc(collection(db, "withdrawals"), { 
+          playerId: currentUser.id, 
+          amount: amount, 
+          method: "Freelance Tab Settlement", 
+          timestamp: serverTimestamp() 
+      });
+
+      // 3. Trigger WhatsApp
+      const phoneNumber = "17787004641"; 
+      let msg = "";
+      if (amount > 0) {
+          msg = `Freelance Settle: I am e-transferring you $${amount} to clear my accumulated tab.`;
+      } else {
+          msg = `Freelance Settle: My accumulated tab is $${amount}. Please e-transfer me $${Math.abs(amount)}.`;
+      }
+      window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(msg)}`, '_blank');
+      
+      showNotification("Tab Settled & Recorded.");
   };
 
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
@@ -427,6 +457,7 @@ const App = () => {
         onCashout={handleSettleUp}
         onTransfer={handleTransferToBacker}
         onClaimBonus={handleClaimBonus}
+        onSettleFreelanceTab={handleSettleFreelanceTab} // <--- PASSED HERE
         onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
         onDeleteSession={handleDeleteSession}
         onDeleteWithdrawal={handleDeleteWithdrawal}
@@ -501,7 +532,6 @@ const App = () => {
               games={games} 
               initialData={editingSession} 
               activeShiftData={activeShift} 
-              // CORRECTED MODE LOGIC
               mode={(
                   view === 'endShift' || 
                   (editingSession && (editingSession.type === 'solo' || (!editingSession.type && editingSession.playersInvolved?.length === 1)))
