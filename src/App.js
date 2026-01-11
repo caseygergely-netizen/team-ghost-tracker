@@ -5,7 +5,7 @@ import {
   serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, limit, getDoc 
 } from 'firebase/firestore';
 import { 
-  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft
+  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft 
 } from 'lucide-react';
 
 // --- IMPORT COMPONENTS ---
@@ -103,14 +103,12 @@ const App = () => {
 
   const handleStartShiftClick = () => { setShowStartModal(true); };
   
-  // --- UPDATED: START SHIFT (Saves Freelance Data) ---
+  // --- UPDATED: START SHIFT ---
   const handleConfirmStartShift = async (startData) => {
-    // startData contains { casino, isFreelance, backerPercent }
     const shiftState = { 
         ...startData, 
         startTime: new Date().toISOString() 
     };
-    
     setActiveShift(shiftState);
     setShowStartModal(false);
     
@@ -135,7 +133,7 @@ const App = () => {
       }
   };
 
-  // --- UPDATED: SESSION SUBMIT (Handles Freelance TAB) ---
+  // --- UPDATED: SESSION SUBMIT (Silent Tab Update) ---
   const handleSessionSubmit = async (data) => {
     let { 
         totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, 
@@ -162,11 +160,11 @@ const App = () => {
        await updateDoc(doc(db, "players", currentUser.id), { isLive: false, currentCasino: null });
     }
 
-    // --- 2. FREELANCE BRANCH (UPDATED FOR TAB) ---
+    // --- 2. FREELANCE BRANCH (UPDATED: NO TEXT, NO WITHDRAWAL LOG) ---
     if (isFreelance) {
         const cutAmount = round5(totalProfit * (backerPercent / 100));
         
-        // A. Log the Session (Stats)
+        // A. Log Session (Stats Only)
         const sessionData = { 
             timestamp: sessionTimestamp, 
             createdAt: serverTimestamp(), 
@@ -181,16 +179,15 @@ const App = () => {
         };
         await addDoc(collection(db, "sessions"), sessionData);
 
-        // B. Update the Running Tab (freelanceDebt)
-        // Note: cutAmount is positive on WIN (owe backer), negative on LOSS (backer owes me)
+        // B. Update the Running Tab (Silent update)
         const me = players.find(p => p.id === currentUser.id) || currentUser;
         const currentTab = me.freelanceDebt || 0;
-        
         await updateDoc(doc(db, "players", currentUser.id), { 
             freelanceDebt: currentTab + cutAmount
         });
 
-        showNotification(`Freelance Session Logged. Tab updated by $${cutAmount}.`);
+        // NOTIFICATION (No WhatsApp trigger here)
+        showNotification(`Session Saved. Tab updated by $${cutAmount}.`);
         
         // Reset View
         if (view === 'endShift' || activeShift) setActiveShift(null);
@@ -252,7 +249,6 @@ const App = () => {
     } catch (e) { showNotification("Error logging session"); }
   };
 
-  // --- REVERT LOGIC (Updated for Freelance Tab) ---
   const revertSessionMath = async (sessionId) => {
     const sessionDoc = sessions.find(s => s.id === sessionId);
     if (!sessionDoc || sessionDoc.isLegacy) return;
@@ -265,7 +261,6 @@ const App = () => {
         return;
     }
 
-    // LEGACY REVERT
     if (sessionDoc.papiBacked) {
         const papiCut = sessionDoc.totalProfit * 0.50;
         const papiDoc = (await getDocs(query(collection(db, "players"), where("role", "==", "investor")))).docs[0];
@@ -340,7 +335,7 @@ const App = () => {
       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: playerCut, method: "Settle Up", timestamp: serverTimestamp() });
       showNotification(`Settled! Took $${playerCut}`);
       
-      const phoneNumber = "17787004641"; // <--- BACKER NUMBER
+      const phoneNumber = "17787004641"; 
       window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I just settled up. Please etransfer me $${playerCut}.`)}`, '_blank');
   };
   
@@ -362,28 +357,15 @@ const App = () => {
 
   const handleClaimBonus = async (amount, weekId) => {
       if (!currentUser) return;
-      const me = players.find(p => p.id === currentUser.id) || currentUser;
-      
-      await updateDoc(doc(db, "players", currentUser.id), { 
-          heldCash: me.heldCash - amount, 
-          pinnedBankroll: me.pinnedBankroll - amount,
-          lastBonusClaimDate: weekId 
-      });
-
-      await addDoc(collection(db, "withdrawals"), { 
-          playerId: currentUser.id, 
-          amount: amount, 
-          method: "Weekly Rebate Bonus", 
-          timestamp: serverTimestamp() 
-      });
-
+      await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - amount, pinnedBankroll: currentUser.pinnedBankroll - amount, lastBonusClaimDate: weekId });
+      await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: amount, method: "Weekly Rebate Bonus", timestamp: serverTimestamp() });
       showNotification(`Bonus Claimed! You pocketed $${amount}.`);
       
       const phoneNumber = "17787004641"; 
       window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I claimed my weekly bonus of $${amount}. Please etransfer.`)}`, '_blank');
   };
 
-  // --- NEW: SETTLE FREELANCE TAB ---
+  // --- SETTLE FREELANCE TAB (This triggers the Text) ---
   const handleSettleFreelanceTab = async () => {
       if (!currentUser) return;
       const me = players.find(p => p.id === currentUser.id) || currentUser;
@@ -457,7 +439,7 @@ const App = () => {
         onCashout={handleSettleUp}
         onTransfer={handleTransferToBacker}
         onClaimBonus={handleClaimBonus}
-        onSettleFreelanceTab={handleSettleFreelanceTab} // <--- PASSED HERE
+        onSettleFreelanceTab={handleSettleFreelanceTab}
         onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
         onDeleteSession={handleDeleteSession}
         onDeleteWithdrawal={handleDeleteWithdrawal}
@@ -534,7 +516,7 @@ const App = () => {
               activeShiftData={activeShift} 
               mode={(
                   view === 'endShift' || 
-                  (editingSession && (editingSession.type === 'solo' || (!editingSession.type && editingSession.playersInvolved?.length === 1)))
+                  (editingSession && (editingSession.type === 'solo' || editingSession.type === 'freelance' || (!editingSession.type && editingSession.playersInvolved?.length === 1)))
               ) ? 'shift' : 'team'}
               onSubmit={handleSessionSubmit} 
               onCancel={() => { setEditingSession(null); setView('dashboard'); }} 

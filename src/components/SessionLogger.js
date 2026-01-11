@@ -6,8 +6,19 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
   const isShiftMode = mode === 'shift';
   
   // -- HELPERS --
-  const getTimeString = (dateObj) => dateObj ? dateObj.toTimeString().slice(0, 5) : '';
-  const getDateString = (dateObj) => dateObj ? dateObj.toISOString().split('T')[0] : '';
+  // FIX: Force LOCAL time strings
+  const getTimeString = (dateObj) => {
+      if (!dateObj) return '';
+      return dateObj.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit' });
+  };
+
+  const getDateString = (dateObj) => {
+      if (!dateObj) return '';
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+  };
 
   // -- STATE INITIALIZATION --
   const [formData, setFormData] = useState(() => {
@@ -27,6 +38,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
       };
 
       if (initialData) {
+          // EDITING
           const d = new Date(initialData.timestamp.seconds * 1000);
           const endD = new Date(d.getTime() + (initialData.duration * 60 * 60 * 1000));
           
@@ -38,8 +50,11 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
               endTime: getTimeString(endD),
               selectedPlayerIds: initialData.playersInvolved || [currentUser.id],
               papiBacked: initialData.papiBacked || false,
+              isFreelance: initialData.type === 'freelance',
+              backerPercent: initialData.backerPercent || 50
           };
       } else if (activeShiftData && isShiftMode) {
+          // ENDING SHIFT
           const startD = new Date(activeShiftData.startTime);
           defaults.date = getDateString(startD);
           defaults.startTime = getTimeString(startD);
@@ -80,9 +95,12 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
     let sessionTimestamp = new Date();
 
     if (isShiftMode) {
-        const start = new Date(`${formData.date}T${formData.startTime}`);
-        let end = new Date(`${formData.date}T${formData.endTime}`);
-        if (end < start) end.setDate(end.getDate() + 1);
+        // Construct date locally
+        const start = new Date(`${formData.date}T${formData.startTime}:00`);
+        let end = new Date(`${formData.date}T${formData.endTime}:00`);
+        
+        if (end < start) end.setDate(end.getDate() + 1); // Overnight check
+
         const diffMs = end - start;
         finalDuration = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0;
         sessionTimestamp = start;
@@ -100,7 +118,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
       totalProfit: finalProfit,
       duration: finalDuration,
       sessionTimestamp,
-      type: isShiftMode ? 'solo' : 'team'
+      type: isShiftMode ? (formData.isFreelance ? 'freelance' : 'solo') : 'team'
     });
   };
 
