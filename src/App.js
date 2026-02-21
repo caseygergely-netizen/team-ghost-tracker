@@ -2,13 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from './firebase';
 import { 
   collection, onSnapshot, doc, updateDoc, addDoc, 
-  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, limit, getDoc 
+  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, getDoc 
 } from 'firebase/firestore';
 import { 
-  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft 
+  Activity, BarChart2, Users, Settings, LogOut, ArrowLeft, Download 
 } from 'lucide-react';
 
-// --- IMPORT COMPONENTS ---
 import LoginView from './components/LoginView';
 import PapiDashboard from './components/PapiDashboard';
 import OliverDashboard from './components/OliverDashboard';
@@ -27,7 +26,6 @@ import StartSessionModal from './components/StartSessionModal';
 import { round5, getTierDetails, parseMoney } from './utils';
 
 const App = () => {
-  // --- STATE ---
   const [currentUser, setCurrentUser] = useState(null);
   const [viewingPlayer, setViewingPlayer] = useState(null);
   const [players, setPlayers] = useState([]);
@@ -51,17 +49,18 @@ const App = () => {
       else localStorage.removeItem('activeShift');
   }, [activeShift]);
 
-  // --- LIVE USER FIX: Always get the latest version from the players array ---
   const liveCurrentUser = useMemo(() => {
       if (!currentUser) return null;
       return players.find(p => p.id === currentUser.id) || currentUser;
   }, [players, currentUser]);
 
-  // --- DATA LISTENERS ---
   useEffect(() => {
     const unsubPlayers = onSnapshot(collection(db, "players"), (snap) => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubSessions = onSnapshot(query(collection(db, "sessions"), orderBy("timestamp", "desc"), limit(100)), (snap) => setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubMachines = onSnapshot(query(collection(db, "machineLogs"), orderBy("timestamp", "desc"), limit(100)), (snap) => setMachineLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
+    // REMOVED LIMITS HERE
+    const unsubSessions = onSnapshot(query(collection(db, "sessions"), orderBy("timestamp", "desc")), (snap) => setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubMachines = onSnapshot(query(collection(db, "machineLogs"), orderBy("timestamp", "desc")), (snap) => setMachineLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
     const unsubGames = onSnapshot(collection(db, "games"), (snap) => setGames(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     return () => { unsubPlayers(); unsubSessions(); unsubMachines(); unsubGames(); };
   }, []);
@@ -69,9 +68,12 @@ const App = () => {
   useEffect(() => {
     const targetId = viewingPlayer ? viewingPlayer.id : currentUser?.id;
     if (!targetId) return;
-    const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", targetId), limit(50)), (snap) => {
+    
+    // REMOVED LIMIT HERE
+    const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", targetId)), (snap) => {
         setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)));
     });
+    
     let unsubPending = () => {};
     if (currentUser) {
         unsubPending = onSnapshot(query(collection(db, "pendingActions"), where("targetPlayerId", "==", currentUser.id)), (snap) => setPendingActions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -93,47 +95,47 @@ const App = () => {
     return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   }, [sessions, currentUser]);
 
-  // --- HANDLERS ---
   const handleLogin = (player) => { setCurrentUser(player); setView('dashboard'); };
   const handleLogout = () => { setCurrentUser(null); setViewingPlayer(null); setView('login'); setPendingActions([]); };
   const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
-  
   const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
   const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
-
   const handleStartShiftClick = () => { setShowStartModal(true); };
   
-  // --- UPDATED: START SHIFT ---
   const handleConfirmStartShift = async (startData) => {
-    const shiftState = { 
-        ...startData, 
-        startTime: new Date().toISOString() 
-    };
+    const shiftState = { ...startData, startTime: new Date().toISOString() };
     setActiveShift(shiftState);
     setShowStartModal(false);
-    
     if (currentUser) {
-        await updateDoc(doc(db, "players", currentUser.id), { 
-            isLive: true, 
-            currentCasino: startData.casino 
-        });
+        await updateDoc(doc(db, "players", currentUser.id), { isLive: true, currentCasino: startData.casino });
     }
-    showNotification("Shift Started! You are now visible online.");
+    showNotification("Shift Started!");
   };
 
   const handleEndShift = () => { setEditingSession(null); setView('endShift'); };
 
-  // --- CORE LOGIC ---
-  const handlePapiLegacyAdd = async (amount) => {
-      if (!currentUser || currentUser.role !== 'backer') return;
-      const papiDoc = players.find(p => p.role === 'investor');
-      if (papiDoc) {
-        await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) + amount, lifetimeEarnings: (papiDoc.lifetimeEarnings || 0) + amount });
-        showNotification(`Added $${amount} to Papi.`);
-      }
+  const handleExportData = () => {
+    const cleanData = sessions.map(s => ({
+      date: new Date(s.timestamp.seconds * 1000).toLocaleDateString(),
+      casino: s.casino,
+      profit: s.totalProfit,
+      duration: s.duration,
+      type: s.type || 'team', 
+      players: s.playersInvolved?.length || 1
+    }));
+    navigator.clipboard.writeText(JSON.stringify(cleanData, null, 2));
+    alert("Data copied to clipboard!");
   };
 
-  // --- UPDATED: SESSION SUBMIT (Silent Tab Update) ---
+  const handlePapiLegacyAdd = async (amount) => {
+    if (!currentUser || currentUser.role !== 'backer') return;
+    const papiDoc = players.find(p => p.role === 'investor');
+    if (papiDoc) {
+      await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) + amount, lifetimeEarnings: (papiDoc.lifetimeEarnings || 0) + amount });
+      showNotification(`Added $${amount} to Papi.`);
+    }
+  };
+
   const handleSessionSubmit = async (data) => {
     let { 
         totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, 
@@ -143,7 +145,42 @@ const App = () => {
     
     if (sessionId) await revertSessionMath(sessionId);
 
-    // 1. SHIFT EXCLUSION LOGIC
+    // --- FREELANCE: HARD LOCKED TO MANUAL ENTRY ---
+    if (isFreelance) {
+        const manualProfit = parseMoney(data.totalProfit);
+        const cutAmount = round5(manualProfit * (backerPercent / 100));
+        
+        const sessionData = { 
+            timestamp: sessionTimestamp, 
+            createdAt: serverTimestamp(), 
+            casino, 
+            game: 'Freelance', 
+            duration, 
+            totalProfit: manualProfit, 
+            playersInvolved: [currentUser.id], 
+            type: 'freelance', 
+            backerPercent,
+            backerCut: cutAmount
+        };
+
+        if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
+        else await addDoc(collection(db, "sessions"), sessionData);
+
+        const me = players.find(p => p.id === currentUser.id) || currentUser;
+        await updateDoc(doc(db, "players", currentUser.id), { 
+            freelanceDebt: (me.freelanceDebt || 0) + cutAmount,
+            isLive: false,
+            currentCasino: null 
+        });
+        
+        localStorage.removeItem('activeShift');
+        setActiveShift(null);
+        setEditingSession(null); setView('dashboard');
+        showNotification("Freelance Saved Successfully.");
+        return; 
+    }
+
+    // --- TEAM ADJUSTMENT LOGIC ---
     if (activeShift && !sessionId && (!selectedPlayerIds || (selectedPlayerIds.length === 1 && !papiBacked))) {
        const shiftStart = new Date(activeShift.startTime);
        const sessionsDuringShift = sessions.filter(s => {
@@ -152,56 +189,20 @@ const App = () => {
        });
        const alreadyLoggedProfit = sessionsDuringShift.reduce((acc, s) => acc + s.totalProfit, 0);
        
-       if (startAmount && endAmount) {
+       if (startAmount && endAmount && parseMoney(endAmount) !== 0) {
            const rawDiff = parseMoney(endAmount) - parseMoney(startAmount);
            totalProfit = rawDiff - alreadyLoggedProfit;
-           showNotification(`Shift Profit Adjusted. Excluded ${alreadyLoggedProfit} from Team Plays.`);
        }
-       await updateDoc(doc(db, "players", currentUser.id), { isLive: false, currentCasino: null });
     }
 
-    // --- 2. FREELANCE BRANCH (UPDATED: NO TEXT, NO WITHDRAWAL LOG) ---
-    if (isFreelance) {
-        const cutAmount = round5(totalProfit * (backerPercent / 100));
-        
-        // A. Log Session (Stats Only)
-        const sessionData = { 
-            timestamp: sessionTimestamp, 
-            createdAt: serverTimestamp(), 
-            casino, 
-            game: 'Freelance', 
-            duration, 
-            totalProfit, 
-            playersInvolved: [currentUser.id], 
-            type: 'freelance', 
-            backerPercent,
-            backerCut: cutAmount
-        };
-        await addDoc(collection(db, "sessions"), sessionData);
-
-        // B. Update the Running Tab (Silent update)
-        const me = players.find(p => p.id === currentUser.id) || currentUser;
-        const currentTab = me.freelanceDebt || 0;
-        await updateDoc(doc(db, "players", currentUser.id), { 
-            freelanceDebt: currentTab + cutAmount
-        });
-
-        // NOTIFICATION (No WhatsApp trigger here)
-        showNotification(`Session Saved. Tab updated by $${cutAmount}.`);
-        
-        // Reset View
-        if (view === 'endShift' || activeShift) setActiveShift(null);
-        setEditingSession(null); 
-        setView('dashboard');
-        return; // STOP HERE
+    if (activeShift && !sessionId) {
+        await updateDoc(doc(db, "players", currentUser.id), { isLive: false, currentCasino: null });
     }
 
-    // --- 3. LEGACY TEAM LOGIC ---
     const updates = [];
     if (!isLegacy) {
         let effectiveTeamProfit = totalProfit; let papiCut = 0;
         if (papiBacked) { papiCut = totalProfit * 0.50; effectiveTeamProfit = totalProfit * 0.50; }
-
         const profitPerPlayer = round5(effectiveTeamProfit / selectedPlayerIds.length);
         const pSnap = await getDocs(collection(db, "players"));
         const livePlayers = pSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -218,12 +219,8 @@ const App = () => {
           tierScore = tierScore || 0; peakScore = peakScore || tierScore; lifetimeEarnings = lifetimeEarnings || 0; lifetimeHours = (lifetimeHours || 0) + duration;
           
           if (selectedPlayerIds.length > 1 || papiBacked) {
-            if (player.id === cashHolderId) { 
-                heldCash += totalProfit; 
-                pinnedBankroll += (totalProfit - profitPerPlayer); 
-            } else { 
-                pinnedBankroll -= profitPerPlayer; 
-            }
+            if (player.id === cashHolderId) { heldCash += totalProfit; pinnedBankroll += (totalProfit - profitPerPlayer); } 
+            else { pinnedBankroll += profitPerPlayer; }
           } else { heldCash += profitPerPlayer; }
 
           if (selectedPlayerIds.length > 1 || papiBacked) { 
@@ -241,26 +238,23 @@ const App = () => {
     try {
       await Promise.all(updates);
       const sessionData = { timestamp: sessionTimestamp, createdAt: serverTimestamp(), casino, game: game || 'Shift', duration, totalProfit, playersInvolved: selectedPlayerIds, cashHolderId: cashHolderId || null, isLegacy: isLegacy || false, papiBacked: papiBacked || false, type: (selectedPlayerIds.length > 1 || papiBacked) ? 'team' : 'solo' };
-      if (sessionId) { await updateDoc(doc(db, "sessions", sessionId), sessionData); showNotification("Session Updated!"); } 
-      else { await addDoc(collection(db, "sessions"), sessionData); showNotification(isLegacy ? "Historical Entry Saved" : "Shift Logged!"); }
-      
-      if (view === 'endShift' || activeShift) setActiveShift(null);
+      if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
+      else await addDoc(collection(db, "sessions"), sessionData);
+      setActiveShift(null);
       setEditingSession(null); setView('dashboard');
+      showNotification("Session Saved!");
     } catch (e) { showNotification("Error logging session"); }
   };
 
   const revertSessionMath = async (sessionId) => {
     const sessionDoc = sessions.find(s => s.id === sessionId);
     if (!sessionDoc || sessionDoc.isLegacy) return;
-    
-    // FREELANCE REVERT: Reverse the amount from the tab
     if (sessionDoc.type === 'freelance') {
         const playerDoc = await getDoc(doc(db, "players", sessionDoc.playersInvolved[0]));
         const currentTab = playerDoc.data().freelanceDebt || 0;
         await updateDoc(playerDoc.ref, { freelanceDebt: currentTab - sessionDoc.backerCut });
         return;
     }
-
     if (sessionDoc.papiBacked) {
         const papiCut = sessionDoc.totalProfit * 0.50;
         const papiDoc = (await getDocs(query(collection(db, "players"), where("role", "==", "investor")))).docs[0];
@@ -286,7 +280,7 @@ const App = () => {
     await Promise.all(updates);
   };
 
-  const handleDeleteSession = async (sessionId) => { if (window.confirm("Delete this session?")) { try { await revertSessionMath(sessionId); await deleteDoc(doc(db, "sessions", sessionId)); showNotification("Session Deleted"); } catch(e) { showNotification("Error deleting"); } } };
+  const handleDeleteSession = async (sessionId) => { if (window.confirm("Delete session?")) { await revertSessionMath(sessionId); await deleteDoc(doc(db, "sessions", sessionId)); showNotification("Deleted."); } };
   
   const handleTeamPay = async (data) => {
     const { winnerId, amount } = data;
@@ -313,8 +307,7 @@ const App = () => {
         logData.winnerPocket = winnerPocket; logData.pinInc = pinInc;
         const newTier = (winnerDoc.tierScore || 0) + amount; const newPeak = Math.max((winnerDoc.peakScore || 0), newTier);
         await updateDoc(doc(db, "players", winnerId), { heldCash: winnerDoc.heldCash + (amount - winnerPocket), pinnedBankroll: winnerDoc.pinnedBankroll + pinInc, tierScore: newTier, peakScore: newPeak, lifetimeEarnings: (winnerDoc.lifetimeEarnings || 0) + winnerPocket, currentTier: getTierDetails(newPeak, winnerDoc.currentTier).level });
-        showNotification(`Winner pocketed $${winnerPocket}`);
-    } else { showNotification("Backer Win Logged"); }
+    }
     const teamPayRef = await addDoc(collection(db, "teamPays"), logData);
     const batch = writeBatch(db);
     activePlayerIds.forEach(pid => { batch.set(doc(collection(db, "pendingActions")), { targetPlayerId: pid, type: 'TEAM_PAY_DISTRIBUTION', cashAmount: otherShares, bankrollAmount: otherShares, reason: `${winnerDoc.name} hit Team Pay ($${amount})`, timestamp: serverTimestamp(), sourceTeamPayId: teamPayRef.id }); });
@@ -334,9 +327,7 @@ const App = () => {
       await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - playerCut, pinnedBankroll: currentUser.pinnedBankroll + backerCut });
       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: playerCut, method: "Settle Up", timestamp: serverTimestamp() });
       showNotification(`Settled! Took $${playerCut}`);
-      
-      const phoneNumber = "17787004641"; 
-      window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I just settled up. Please etransfer me $${playerCut}.`)}`, '_blank');
+      window.open(`https://wa.me/17787004641?text=${encodeURIComponent(`TEAM GHOST: Settle up claim for $${playerCut}.`)}`, '_blank');
   };
   
   const handleTransferToBacker = async (amount) => {
@@ -349,7 +340,7 @@ const App = () => {
   const handleTransferToPapi = async (amount) => {
       if (!currentUser) return;
       const papiDoc = players.find(p => p.role === 'investor');
-      if (!papiDoc) return alert("No Investor found.");
+      if (!papiDoc) return;
       await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) - amount });
       await addDoc(collection(db, "withdrawals"), { playerId: papiDoc.id, amount: amount, method: "Transfer from Oliver", timestamp: serverTimestamp() });
       showNotification(`Transferred $${amount} to Papi.`);
@@ -359,93 +350,29 @@ const App = () => {
       if (!currentUser) return;
       await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - amount, pinnedBankroll: currentUser.pinnedBankroll - amount, lastBonusClaimDate: weekId });
       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: amount, method: "Weekly Rebate Bonus", timestamp: serverTimestamp() });
-      showNotification(`Bonus Claimed! You pocketed $${amount}.`);
-      
-      const phoneNumber = "17787004641"; 
-      window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(`TEAM GHOST: I claimed my weekly bonus of $${amount}. Please etransfer.`)}`, '_blank');
+      showNotification(`Bonus Claimed!`);
+      window.open(`https://wa.me/17787004641?text=${encodeURIComponent(`TEAM GHOST: I claimed my weekly bonus of $${amount}.`)}`, '_blank');
   };
 
-  // --- SETTLE FREELANCE TAB (This triggers the Text) ---
   const handleSettleFreelanceTab = async () => {
       if (!currentUser) return;
       const me = players.find(p => p.id === currentUser.id) || currentUser;
       const amount = me.freelanceDebt || 0;
-      
       if (amount === 0) return;
-
-      // 1. Reset Tab
       await updateDoc(doc(db, "players", currentUser.id), { freelanceDebt: 0 });
-
-      // 2. Log Record
-      await addDoc(collection(db, "withdrawals"), { 
-          playerId: currentUser.id, 
-          amount: amount, 
-          method: "Freelance Tab Settlement", 
-          timestamp: serverTimestamp() 
-      });
-
-      // 3. Trigger WhatsApp
-      const phoneNumber = "17787004641"; 
-      let msg = "";
-      if (amount > 0) {
-          msg = `Freelance Settle: I am e-transferring you $${amount} to clear my accumulated tab.`;
-      } else {
-          msg = `Freelance Settle: My accumulated tab is $${amount}. Please e-transfer me $${Math.abs(amount)}.`;
-      }
-      window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(msg)}`, '_blank');
-      
-      showNotification("Tab Settled & Recorded.");
+      await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: amount, method: "Freelance Tab Settlement", timestamp: serverTimestamp() });
+      const msg = amount > 0 ? `Freelance Settle: I am e-transferring you $${amount}.` : `Freelance Settle: Please e-transfer me $${Math.abs(amount)}.`;
+      window.open(`https://wa.me/17787004641?text=${encodeURIComponent(msg)}`, '_blank');
+      showNotification("Tab Settled.");
   };
 
   const handleDeleteLog = async (id) => { if(window.confirm("Delete log?")) await deleteDoc(doc(db, "machineLogs", id)); };
-  const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal? Stats won't revert.")) await deleteDoc(doc(db, "withdrawals", id)); };
+  const handleDeleteWithdrawal = async (id) => { if(window.confirm("Delete withdrawal?")) await deleteDoc(doc(db, "withdrawals", id)); };
 
-  // --- RENDER HELPERS ---
   const renderDashboard = () => {
-    if (currentUser.role === 'investor') {
-      return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
-    }
-    if (currentUser.role === 'backer') {
-      return (
-        <OliverDashboard 
-          currentUser={liveCurrentUser}
-          players={players}
-          sessions={sessions}
-          isShiftActive={!!activeShift}
-          onStartShift={handleStartShiftClick}
-          onEndShift={handleEndShift}
-          onTransferToPapi={handleTransferToPapi}
-          onPapiLegacyAdd={handlePapiLegacyAdd}
-          onTeamPay={() => setView('teamPay')}
-          onLogMachine={() => setView('logMachine')}
-          onLogTeamSession={() => setView('logTeamSession')}
-          onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
-          onDeleteSession={handleDeleteSession}
-          onDeleteWithdrawal={handleDeleteWithdrawal}
-          onClaimBonus={handleClaimBonus}
-        />
-      );
-    }
-    return (
-      <PlayerDashboard 
-        currentUser={liveCurrentUser}
-        players={players}
-        sessions={sessions}
-        withdrawals={withdrawals}
-        isShiftActive={!!activeShift}
-        onStartShift={handleStartShiftClick}
-        onTeamPay={() => setView('teamPay')}
-        onLogMachine={() => setView('logMachine')}
-        onCashout={handleSettleUp}
-        onTransfer={handleTransferToBacker}
-        onClaimBonus={handleClaimBonus}
-        onSettleFreelanceTab={handleSettleFreelanceTab}
-        onEditSession={(s) => { setEditingSession(s); setView('logSession'); }}
-        onDeleteSession={handleDeleteSession}
-        onDeleteWithdrawal={handleDeleteWithdrawal}
-        setView={setView}
-      />
-    );
+    if (currentUser.role === 'investor') return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
+    if (currentUser.role === 'backer') return <OliverDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onEndShift={handleEndShift} onTransferToPapi={handleTransferToPapi} onPapiLegacyAdd={handlePapiLegacyAdd} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onLogTeamSession={() => setView('logTeamSession')} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} onClaimBonus={handleClaimBonus} />;
+    return <PlayerDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onCashout={handleSettleUp} onTransfer={handleTransferToBacker} onClaimBonus={handleClaimBonus} onSettleFreelanceTab={handleSettleFreelanceTab} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} setView={setView} />;
   };
 
   if (view === 'login') return <LoginView players={sortedPlayers} sessions={sessions} onLogin={handleLogin} />;
@@ -453,43 +380,20 @@ const App = () => {
   
   if (view === 'spectator' && viewingPlayer) {
       return (
-        <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
+        <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8">
             <header className="flex items-center mb-8 border-b border-gray-700 pb-4 gap-4">
-                <button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full hover:bg-gray-700">
-                    <ArrowLeft size={20}/>
-                </button>
-                <h1 className="text-xl font-bold text-gray-400">Viewing: <span className="text-white">{viewingPlayer.name}</span></h1>
+                <button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full"><ArrowLeft size={20}/></button>
+                <h1 className="text-xl font-bold">Viewing: {viewingPlayer.name}</h1>
             </header>
-             <PlayerDashboard 
-                currentUser={liveCurrentUser} 
-                viewingUser={viewingPlayer} 
-                players={players}
-                sessions={sessions}
-                withdrawals={withdrawals} 
-                isShiftActive={false} 
-                onStartShift={() => {}} 
-                onTeamPay={() => {}} 
-                onLogMachine={() => {}} 
-                onCashout={() => {}} 
-                onTransfer={() => {}} 
-                onClaimBonus={() => {}} 
-                onEditSession={() => {}} 
-                onDeleteSession={() => {}} 
-                onDeleteWithdrawal={() => {}} 
-                setView={() => {}} 
-            />
+             <PlayerDashboard currentUser={liveCurrentUser} viewingUser={viewingPlayer} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={false} onStartShift={() => {}} onTeamPay={() => {}} onLogMachine={() => {}} onCashout={() => {}} onTransfer={() => {}} onClaimBonus={() => {}} onEditSession={() => {}} onDeleteSession={() => {}} onDeleteWithdrawal={() => {}} setView={() => {}} />
         </div>
       );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
-      {/* HEADER */}
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8">
       <header className="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-emerald-400 tracking-wider">TEAM GHOST</h1>
-          <p className="text-xs text-gray-400">Player: <span className="text-white font-bold">{currentUser?.name}</span></p>
-        </div>
+        <div><h1 className="text-xl font-bold text-emerald-400">TEAM GHOST</h1><p className="text-xs text-gray-400">Player: {currentUser?.name}</p></div>
         <div className="flex gap-2">
           <button onClick={() => setView('dashboard')} className={`p-2 rounded ${view === 'dashboard' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Activity size={20}/></button>
           {currentUser.role !== 'investor' && (
@@ -499,28 +403,16 @@ const App = () => {
               <button onClick={() => setView('settings')} className={`p-2 rounded ${view === 'settings' ? 'bg-emerald-600' : 'bg-gray-800'}`}><Settings size={20}/></button>
             </>
           )}
+          <button onClick={handleExportData} className="p-2 rounded bg-blue-900/50 text-blue-400 ml-2"><Download size={20}/></button>
           <button onClick={handleLogout} className="p-2 rounded bg-red-900/50 text-red-400 ml-2"><LogOut size={20}/></button>
         </div>
       </header>
-      {notification && <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded shadow-lg animate-bounce z-50">{notification}</div>}
+      {notification && <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded z-50 animate-bounce">{notification}</div>}
       <main className="max-w-4xl mx-auto pb-32">
         {view === 'dashboard' && renderDashboard()}
         {view === 'teamRoster' && <TeamRoster players={players} sessions={sessions} onViewPlayer={handleViewPlayer} />}
         {(view === 'logSession' || view === 'endShift' || view === 'logTeamSession') && (
-           <SessionLogger 
-              players={players} 
-              currentUser={liveCurrentUser} 
-              casinoOptions={casinoOptions} 
-              games={games} 
-              initialData={editingSession} 
-              activeShiftData={activeShift} 
-              mode={(
-                  view === 'endShift' || 
-                  (editingSession && (editingSession.type === 'solo' || editingSession.type === 'freelance' || (!editingSession.type && editingSession.playersInvolved?.length === 1)))
-              ) ? 'shift' : 'team'}
-              onSubmit={handleSessionSubmit} 
-              onCancel={() => { setEditingSession(null); setView('dashboard'); }} 
-            />
+           <SessionLogger players={players} currentUser={liveCurrentUser} casinoOptions={casinoOptions} games={games} initialData={editingSession} activeShiftData={activeShift} mode={(view === 'endShift' || (editingSession && (editingSession.type === 'solo' || editingSession.type === 'freelance' || (!editingSession.type && editingSession.playersInvolved?.length === 1)))) ? 'shift' : 'team'} onSubmit={handleSessionSubmit} onCancel={() => { setEditingSession(null); setView('dashboard'); }} />
         )}
         {view === 'teamPay' && <TeamPayLogger players={players} onSubmit={handleTeamPay} onCancel={() => setView('dashboard')} />}
         {view === 'logMachine' && <MachineLogger currentUser={liveCurrentUser} onCancel={() => setView('dashboard')} />}

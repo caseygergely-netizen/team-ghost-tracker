@@ -70,7 +70,8 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
       return defaults;
   });
 
-  const [useBankrollMode, setUseBankrollMode] = useState(isShiftMode); 
+  // CHANGED: Default to FALSE so it shows "Total Profit" input first
+  const [useBankrollMode, setUseBankrollMode] = useState(false); 
 
   // -- HANDLERS --
   const handleChange = (f, v) => setFormData(prev => ({ ...prev, [f]: v }));
