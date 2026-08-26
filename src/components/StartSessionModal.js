@@ -5,17 +5,20 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
   const [casino, setCasino] = useState('');
   const [showList, setShowList] = useState(false);
   
-  // NEW DEFAULTS: Freelance ON, 25% Cut
+  // FIXED: Default backer cut is now 0%
   const [isFreelance, setIsFreelance] = useState(true);
-  const [backerPercent, setBackerPercent] = useState(25);
+  const [backerPercent, setBackerPercent] = useState(0);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (casino.trim()) {
+        const rawCut = parseFloat(backerPercent);
+        const safeCut = !isNaN(rawCut) ? rawCut : 0;
+
         onConfirm({ 
             casino, 
             isFreelance, 
-            backerPercent: isFreelance ? parseFloat(backerPercent) : 0 
+            backerPercent: isFreelance ? safeCut : 0 
         });
     }
   };

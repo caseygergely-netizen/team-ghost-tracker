@@ -6,7 +6,6 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
   const isShiftMode = mode === 'shift';
   
   // -- HELPERS --
-  // FIX: Force LOCAL time strings
   const getTimeString = (dateObj) => {
       if (!dateObj) return '';
       return dateObj.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit' });
@@ -34,7 +33,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           cashHolderId: currentUser.id,
           papiBacked: false,
           isFreelance: false,
-          backerPercent: 50
+          backerPercent: 0 // FIXED: Default to 0% now
       };
 
       if (initialData) {
@@ -42,6 +41,10 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           const d = new Date(initialData.timestamp.seconds * 1000);
           const endD = new Date(d.getTime() + (initialData.duration * 60 * 60 * 1000));
           
+          // FIXED: Safely parse initial backerPercent so 0 doesn't trigger fallback
+          const rawPct = parseFloat(initialData.backerPercent);
+          const safeBackerPercent = !isNaN(rawPct) ? rawPct : 0;
+
           defaults = {
               ...defaults,
               ...initialData,
@@ -51,7 +54,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
               selectedPlayerIds: initialData.playersInvolved || [currentUser.id],
               papiBacked: initialData.papiBacked || false,
               isFreelance: initialData.type === 'freelance',
-              backerPercent: initialData.backerPercent || 50
+              backerPercent: safeBackerPercent
           };
       } else if (activeShiftData && isShiftMode) {
           // ENDING SHIFT
@@ -63,14 +66,14 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           defaults.startAmount = currentUser.heldCash || ''; 
           if (activeShiftData.isFreelance) {
               defaults.isFreelance = true;
-              defaults.backerPercent = activeShiftData.backerPercent;
+              const rawActivePct = parseFloat(activeShiftData.backerPercent);
+              defaults.backerPercent = !isNaN(rawActivePct) ? rawActivePct : 0; // FIXED: Safely respect 0 on active shifts
           }
       }
 
       return defaults;
   });
 
-  // CHANGED: Default to FALSE so it shows "Total Profit" input first
   const [useBankrollMode, setUseBankrollMode] = useState(false); 
 
   // -- HANDLERS --
@@ -96,11 +99,10 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
     let sessionTimestamp = new Date();
 
     if (isShiftMode) {
-        // Construct date locally
         const start = new Date(`${formData.date}T${formData.startTime}:00`);
         let end = new Date(`${formData.date}T${formData.endTime}:00`);
         
-        if (end < start) end.setDate(end.getDate() + 1); // Overnight check
+        if (end < start) end.setDate(end.getDate() + 1);
 
         const diffMs = end - start;
         finalDuration = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0;

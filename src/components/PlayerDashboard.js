@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+// 1. ADDED Brush to the recharts import
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts';
 import { 
   CheckCircle, ArrowRightLeft, DollarSign, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users, Gift, Briefcase, TrendingUp, Clock, Eye, EyeOff, Shield 
 } from 'lucide-react';
@@ -16,8 +17,8 @@ const PlayerDashboard = ({
   const [transferAmount, setTransferAmount] = useState('');
   const [showHiddenStats, setShowHiddenStats] = useState(false);
   
-  // Dynamic Graph Range (Last X sessions)
-  const [viewRange, setViewRange] = useState(20);
+  // 2. CHANGED: Default view is now 1 Month
+  const [viewRange, setViewRange] = useState('1M');
 
   const targetUser = viewingUser || currentUser;
   const isSpectator = !!viewingUser;
@@ -43,8 +44,9 @@ const PlayerDashboard = ({
               const profit = parseFloat(s.totalProfit) || 0;
               const duration = parseFloat(s.duration) || 0;
               
-              // Recalculate cut on the fly to prevent database "ghosting"
-              const pct = parseFloat(s.backerPercent) || 25;
+              // FIX: Safely parse 0 without it defaulting to something else
+              const rawPct = parseFloat(s.backerPercent);
+              const pct = !isNaN(rawPct) ? rawPct : 0; 
               const sessionCut = round5(profit * (pct / 100)); 
               
               gross += profit;
@@ -81,21 +83,38 @@ const PlayerDashboard = ({
       return { isEligible, reason, bonusAmount, sessionCount, weeklyProfit, weekId: id };
   }, [sessions, targetUser.id, surplus, myStats.lastBonusClaimDate]);
 
-  // --- CHART DATA (DYNAMIC ZOOM & ATOMIC MATH) ---
+  // --- 3. CHART DATA (DATE-BASED FILTERING) ---
   const chartData = useMemo(() => {
     const mySessions = [...sessions]
       .filter(s => s.playersInvolved && s.playersInvolved.includes(targetUser.id))
       .sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
     
-    // Slice for the requested range (e.g., last 20 sessions)
-    const visibleSessions = mySessions.slice(-viewRange);
+    // Determine Cutoff Date
+    const now = new Date();
+    let cutoffDate = new Date(0); // Dawn of time (ALL)
+
+    if (viewRange === '1W') {
+        cutoffDate = new Date(now);
+        cutoffDate.setDate(now.getDate() - 7);
+    } else if (viewRange === '1M') {
+        cutoffDate = new Date(now);
+        cutoffDate.setDate(now.getDate() - 30);
+    }
+
+    // Filter by date
+    const visibleSessions = mySessions.filter(s => {
+        const sDate = new Date(s.timestamp?.seconds * 1000);
+        return sDate >= cutoffDate;
+    });
     
     let runningTotal = 0;
     return visibleSessions.map(s => { 
         let share = 0;
         if (s.type === 'freelance') {
             const p = parseFloat(s.totalProfit) || 0;
-            const pct = parseFloat(s.backerPercent) || 25;
+            // FIX: Safely parse 0 here as well
+            const rawPct = parseFloat(s.backerPercent);
+            const pct = !isNaN(rawPct) ? rawPct : 0;
             share = p - round5(p * (pct / 100));
         } else {
             const effectiveProfit = s.papiBacked ? s.totalProfit * 0.5 : s.totalProfit;
@@ -106,7 +125,12 @@ const PlayerDashboard = ({
             share = effectiveProfit / (activePlayerCount || 1);
         }
         runningTotal += share; 
-        return { date: new Date(s.timestamp?.seconds * 1000).toLocaleDateString(), profit: runningTotal }; 
+        
+        // Format date to be cleaner (e.g., "Jan 15")
+        const dateObj = new Date(s.timestamp?.seconds * 1000);
+        const formattedDate = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        
+        return { date: formattedDate, profit: runningTotal }; 
     });
   }, [sessions, targetUser.id, players, viewRange]);
 
@@ -184,18 +208,18 @@ const PlayerDashboard = ({
                 </div>
             </div>
 
-            {/* --- PROFIT GRAPH (WITH DYNAMIC ZOOM) --- */}
+            {/* --- PROFIT GRAPH (WITH TIME FILTERS & SCROLL BRUSH) --- */}
             <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 h-80">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-sm text-gray-400 font-bold flex items-center gap-2">
                         <TrendingUp size={16}/> Profit Trend
                     </h3>
                     <div className="flex gap-1 bg-gray-900 p-1 rounded-lg">
-                        {[10, 25, 50, 100].map(range => (
+                        {['1W', '1M', 'ALL'].map(range => (
                             <button
                                 key={range}
                                 onClick={() => setViewRange(range)}
-                                className={`px-2 py-1 text-[10px] rounded transition font-bold ${viewRange === range ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                                className={`px-3 py-1 text-xs rounded transition font-bold ${viewRange === range ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
                             >
                                 {range}
                             </button>
@@ -205,10 +229,22 @@ const PlayerDashboard = ({
                 <ResponsiveContainer width="100%" height="80%">
                     <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis dataKey="date" hide />
-                        <YAxis stroke="#9CA3AF" domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
-                        <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none' }} itemStyle={{ color: '#10B981' }} />
+                        <XAxis dataKey="date" stroke="#9CA3AF" tick={{ fontSize: 10 }} minTickGap={20} />
+                        <YAxis stroke="#9CA3AF" domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} width={60} />
+                        <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }} itemStyle={{ color: '#10B981' }} />
                         <Line type="monotone" dataKey="profit" stroke="#10B981" strokeWidth={3} dot={false} />
+                        
+                        {/* 4. THE BRUSH (Scrollbar) - Only shows on ALL view if there are > 31 sessions */}
+                        {viewRange === 'ALL' && chartData.length > 31 && (
+                            <Brush 
+                                dataKey="date" 
+                                height={25} 
+                                stroke="#4B5563" 
+                                fill="#1F2937" 
+                                travellerWidth={12}
+                                startIndex={Math.max(0, chartData.length - 31)} // Defaults viewport to the last 31 days/sessions
+                            />
+                        )}
                     </LineChart>
                 </ResponsiveContainer>
             </div>
