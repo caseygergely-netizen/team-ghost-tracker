@@ -121,7 +121,8 @@ const App = () => {
       profit: s.totalProfit,
       duration: s.duration,
       type: s.type || 'team', 
-      players: s.playersInvolved?.length || 1
+      players: s.playersInvolved?.length || 1,
+      apPresent: s.apPresent || false // Included in export so you can analyze it in Excel/Python
     }));
     navigator.clipboard.writeText(JSON.stringify(cleanData, null, 2));
     alert("Data copied to clipboard!");
@@ -140,7 +141,7 @@ const App = () => {
     let { 
         totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, 
         sessionTimestamp, sessionId, isLegacy, papiBacked, startAmount, endAmount,
-        isFreelance, backerPercent 
+        isFreelance, backerPercent, apPresent // <-- NEW: Added apPresent extraction
     } = data;
     
     if (sessionId) await revertSessionMath(sessionId);
@@ -160,7 +161,8 @@ const App = () => {
             playersInvolved: [currentUser.id], 
             type: 'freelance', 
             backerPercent,
-            backerCut: cutAmount
+            backerCut: cutAmount,
+            apPresent: apPresent || false // <-- NEW: Save AP flag
         };
 
         if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
@@ -237,7 +239,20 @@ const App = () => {
 
     try {
       await Promise.all(updates);
-      const sessionData = { timestamp: sessionTimestamp, createdAt: serverTimestamp(), casino, game: game || 'Shift', duration, totalProfit, playersInvolved: selectedPlayerIds, cashHolderId: cashHolderId || null, isLegacy: isLegacy || false, papiBacked: papiBacked || false, type: (selectedPlayerIds.length > 1 || papiBacked) ? 'team' : 'solo' };
+      const sessionData = { 
+          timestamp: sessionTimestamp, 
+          createdAt: serverTimestamp(), 
+          casino, 
+          game: game || 'Shift', 
+          duration, 
+          totalProfit, 
+          playersInvolved: selectedPlayerIds, 
+          cashHolderId: cashHolderId || null, 
+          isLegacy: isLegacy || false, 
+          papiBacked: papiBacked || false, 
+          type: (selectedPlayerIds.length > 1 || papiBacked) ? 'team' : 'solo',
+          apPresent: apPresent || false // <-- NEW: Save AP flag
+      };
       if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
       else await addDoc(collection(db, "sessions"), sessionData);
       setActiveShift(null);

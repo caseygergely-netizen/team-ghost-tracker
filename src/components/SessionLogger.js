@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Clock, Calculator, MapPin, Calendar, Briefcase } from 'lucide-react';
+import { Users, Clock, Calculator, MapPin, Calendar, Briefcase, Eye } from 'lucide-react';
 import { parseMoney } from '../utils';
 
 const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, initialData, mode, onSubmit, onCancel }) => {
@@ -33,7 +33,8 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           cashHolderId: currentUser.id,
           papiBacked: false,
           isFreelance: false,
-          backerPercent: 0 // FIXED: Default to 0% now
+          backerPercent: 0,
+          apPresent: false // NEW: Default to AP not present
       };
 
       if (initialData) {
@@ -41,7 +42,6 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           const d = new Date(initialData.timestamp.seconds * 1000);
           const endD = new Date(d.getTime() + (initialData.duration * 60 * 60 * 1000));
           
-          // FIXED: Safely parse initial backerPercent so 0 doesn't trigger fallback
           const rawPct = parseFloat(initialData.backerPercent);
           const safeBackerPercent = !isNaN(rawPct) ? rawPct : 0;
 
@@ -54,7 +54,8 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
               selectedPlayerIds: initialData.playersInvolved || [currentUser.id],
               papiBacked: initialData.papiBacked || false,
               isFreelance: initialData.type === 'freelance',
-              backerPercent: safeBackerPercent
+              backerPercent: safeBackerPercent,
+              apPresent: initialData.apPresent || false // NEW: Load past state
           };
       } else if (activeShiftData && isShiftMode) {
           // ENDING SHIFT
@@ -67,7 +68,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           if (activeShiftData.isFreelance) {
               defaults.isFreelance = true;
               const rawActivePct = parseFloat(activeShiftData.backerPercent);
-              defaults.backerPercent = !isNaN(rawActivePct) ? rawActivePct : 0; // FIXED: Safely respect 0 on active shifts
+              defaults.backerPercent = !isNaN(rawActivePct) ? rawActivePct : 0; 
           }
       }
 
@@ -185,7 +186,21 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           </div>
         )}
 
-        <div>
+        <div className="space-y-4">
+            {/* NEW: AP PRESENT TOGGLE */}
+            <div className={`p-4 rounded border flex items-center justify-between transition-colors ${formData.apPresent ? 'bg-red-900/20 border-red-500/50' : 'bg-gray-900 border-gray-700'}`}>
+                <label className="text-sm font-bold text-white flex items-center gap-2">
+                    <Eye size={16} className={formData.apPresent ? "text-red-400" : "text-gray-500"} />
+                    Other APs Present?
+                </label>
+                <input 
+                    type="checkbox" 
+                    className="w-5 h-5 accent-red-500" 
+                    checked={formData.apPresent} 
+                    onChange={e => handleChange('apPresent', e.target.checked)} 
+                />
+            </div>
+
             {isShiftMode && (
                 <div className="flex justify-end mb-2">
                     <button type="button" onClick={() => setUseBankrollMode(!useBankrollMode)} className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"><Calculator size={14}/> {useBankrollMode ? "Switch to Manual Profit" : "Switch to Start/End Calc"}</button>
