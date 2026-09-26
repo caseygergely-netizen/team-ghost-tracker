@@ -57,7 +57,6 @@ const App = () => {
   useEffect(() => {
     const unsubPlayers = onSnapshot(collection(db, "players"), (snap) => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
-    // REMOVED LIMITS HERE
     const unsubSessions = onSnapshot(query(collection(db, "sessions"), orderBy("timestamp", "desc")), (snap) => setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubMachines = onSnapshot(query(collection(db, "machineLogs"), orderBy("timestamp", "desc")), (snap) => setMachineLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
@@ -69,7 +68,6 @@ const App = () => {
     const targetId = viewingPlayer ? viewingPlayer.id : currentUser?.id;
     if (!targetId) return;
     
-    // REMOVED LIMIT HERE
     const unsubWithdrawals = onSnapshot(query(collection(db, "withdrawals"), where("playerId", "==", targetId)), (snap) => {
         setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)));
     });
@@ -114,18 +112,39 @@ const App = () => {
 
   const handleEndShift = () => { setEditingSession(null); setView('endShift'); };
 
+  // --- UPDATED EXPORT: NOW WITH PRECISE TIMES (HH:MM) ---
   const handleExportData = () => {
-    const cleanData = sessions.map(s => ({
-      date: new Date(s.timestamp.seconds * 1000).toLocaleDateString(),
-      casino: s.casino,
-      profit: s.totalProfit,
-      duration: s.duration,
-      type: s.type || 'team', 
-      players: s.playersInvolved?.length || 1,
-      apPresent: s.apPresent || false // Included in export so you can analyze it in Excel/Python
-    }));
-    navigator.clipboard.writeText(JSON.stringify(cleanData, null, 2));
-    alert("Data copied to clipboard!");
+    const cleanData = sessions.map(s => {
+      const dateObj = new Date(s.timestamp.seconds * 1000);
+      return {
+        id: s.id,
+        date: dateObj.toLocaleDateString(),
+        dayOfWeek: dateObj.toLocaleDateString('en-US', { weekday: 'long' }),
+        startTime: dateObj.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit' }),
+        casino: s.casino,
+        profit: s.totalProfit,
+        duration: s.duration,
+        type: s.type || 'team', 
+        players: s.playersInvolved?.length || 1,
+        apPresent: s.apPresent || false,
+        foundPlays: s.foundPlays !== undefined ? s.foundPlays : true
+      };
+    });
+
+    const dataStr = JSON.stringify(cleanData, null, 2);
+    
+    // Create a Blob (a file-like object)
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a hidden link, click it to trigger download, then clean up
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `team-ghost-export-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handlePapiLegacyAdd = async (amount) => {
@@ -141,7 +160,7 @@ const App = () => {
     let { 
         totalProfit, selectedPlayerIds, cashHolderId, casino, game, duration, 
         sessionTimestamp, sessionId, isLegacy, papiBacked, startAmount, endAmount,
-        isFreelance, backerPercent, apPresent // <-- NEW: Added apPresent extraction
+        isFreelance, backerPercent, apPresent, foundPlays
     } = data;
     
     if (sessionId) await revertSessionMath(sessionId);
@@ -162,7 +181,8 @@ const App = () => {
             type: 'freelance', 
             backerPercent,
             backerCut: cutAmount,
-            apPresent: apPresent || false // <-- NEW: Save AP flag
+            apPresent: apPresent || false,
+            foundPlays: foundPlays !== undefined ? foundPlays : true 
         };
 
         if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
@@ -251,7 +271,8 @@ const App = () => {
           isLegacy: isLegacy || false, 
           papiBacked: papiBacked || false, 
           type: (selectedPlayerIds.length > 1 || papiBacked) ? 'team' : 'solo',
-          apPresent: apPresent || false // <-- NEW: Save AP flag
+          apPresent: apPresent || false,
+          foundPlays: foundPlays !== undefined ? foundPlays : true
       };
       if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
       else await addDoc(collection(db, "sessions"), sessionData);

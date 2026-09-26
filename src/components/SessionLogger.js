@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Clock, Calculator, MapPin, Calendar, Briefcase, Eye } from 'lucide-react';
+import { Users, Clock, Calculator, MapPin, Calendar, Briefcase, Eye, CheckCircle } from 'lucide-react';
 import { parseMoney } from '../utils';
 
 const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, initialData, mode, onSubmit, onCancel }) => {
@@ -34,7 +34,8 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           papiBacked: false,
           isFreelance: false,
           backerPercent: 0,
-          apPresent: false // NEW: Default to AP not present
+          apPresent: false, 
+          foundPlays: true // NEW: Default to true (assume you found plays)
       };
 
       if (initialData) {
@@ -55,7 +56,8 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
               papiBacked: initialData.papiBacked || false,
               isFreelance: initialData.type === 'freelance',
               backerPercent: safeBackerPercent,
-              apPresent: initialData.apPresent || false // NEW: Load past state
+              apPresent: initialData.apPresent || false,
+              foundPlays: initialData.foundPlays !== undefined ? initialData.foundPlays : true // NEW: Load past state
           };
       } else if (activeShiftData && isShiftMode) {
           // ENDING SHIFT
@@ -187,18 +189,24 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
         )}
 
         <div className="space-y-4">
-            {/* NEW: AP PRESENT TOGGLE */}
-            <div className={`p-4 rounded border flex items-center justify-between transition-colors ${formData.apPresent ? 'bg-red-900/20 border-red-500/50' : 'bg-gray-900 border-gray-700'}`}>
-                <label className="text-sm font-bold text-white flex items-center gap-2">
-                    <Eye size={16} className={formData.apPresent ? "text-red-400" : "text-gray-500"} />
-                    Other APs Present?
-                </label>
-                <input 
-                    type="checkbox" 
-                    className="w-5 h-5 accent-red-500" 
-                    checked={formData.apPresent} 
-                    onChange={e => handleChange('apPresent', e.target.checked)} 
-                />
+            <div className="grid grid-cols-2 gap-3">
+                {/* AP PRESENT TOGGLE */}
+                <div className={`p-3 rounded-lg border flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors ${formData.apPresent ? 'bg-red-900/20 border-red-500/50' : 'bg-gray-900 border-gray-700'}`} onClick={() => handleChange('apPresent', !formData.apPresent)}>
+                    <label className="text-xs font-bold text-white flex items-center gap-1 cursor-pointer">
+                        <Eye size={14} className={formData.apPresent ? "text-red-400" : "text-gray-500"} />
+                        AP Present?
+                    </label>
+                    <input type="checkbox" className="w-5 h-5 accent-red-500 cursor-pointer pointer-events-none" checked={formData.apPresent} readOnly />
+                </div>
+
+                {/* FOUND PLAYS TOGGLE */}
+                <div className={`p-3 rounded-lg border flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors ${!formData.foundPlays ? 'bg-orange-900/20 border-orange-500/50' : 'bg-gray-900 border-gray-700'}`} onClick={() => handleChange('foundPlays', !formData.foundPlays)}>
+                    <label className="text-xs font-bold text-white flex items-center gap-1 cursor-pointer">
+                        <CheckCircle size={14} className={!formData.foundPlays ? "text-orange-400" : "text-gray-500"} />
+                        Found Plays?
+                    </label>
+                    <input type="checkbox" className="w-5 h-5 accent-emerald-500 cursor-pointer pointer-events-none" checked={formData.foundPlays} readOnly />
+                </div>
             </div>
 
             {isShiftMode && (
