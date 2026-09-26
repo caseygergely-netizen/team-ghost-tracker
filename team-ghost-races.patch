@@ -1,0 +1,248 @@
+diff --git a/src/App.js b/src/App.js
+index e844aa5..64d575d 100644
+--- a/src/App.js
++++ b/src/App.js
+@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
+ import { db } from './firebase';
+ import { 
+   collection, onSnapshot, doc, updateDoc, addDoc, 
+-  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch, getDoc 
++  serverTimestamp, query, orderBy, where, deleteDoc, getDocs, writeBatch,
++  runTransaction, increment
+ } from 'firebase/firestore';
+ import { 
+   Activity, BarChart2, Users, Settings, LogOut, ArrowLeft, Download 
+@@ -26,6 +27,16 @@ import StartSessionModal from './components/StartSessionModal';
+ import { round5, getTierDetails, parseMoney } from './utils';
+ import { AuthProvider, useAuth } from './auth';
+ 
++// --- RACE-SAFE BALANCE HELPER ---
++// Applies numeric deltas with Firestore's server-side increment(), so two
++// people acting at the same time can't overwrite each other's math.
++// `sets` are plain field assignments applied in the same write.
++const addToPlayer = async (pid, deltas, sets = {}) => {
++  const data = { ...sets };
++  for (const [k, v] of Object.entries(deltas)) data[k] = increment(v);
++  await updateDoc(doc(db, "players", pid), data);
++};
++
+ const AuthedApp = () => {
+   const { playerId, signOut } = useAuth();
+   const [viewingPlayer, setViewingPlayer] = useState(null);
+@@ -116,7 +127,9 @@ const AuthedApp = () => {
+   // --- UPDATED EXPORT: NOW WITH PRECISE TIMES (HH:MM) ---
+   const handleExportData = () => {
+     const cleanData = sessions.map(s => {
+-      const dateObj = new Date(s.timestamp.seconds * 1000);
++      // Some imported/legacy sessions may lack a timestamp; fall back gracefully.
++      const tsSeconds = s.timestamp?.seconds || s.createdAt?.seconds || null;
++      const dateObj = tsSeconds ? new Date(tsSeconds * 1000) : new Date();
+       return {
+         id: s.id,
+         date: dateObj.toLocaleDateString(),
+@@ -152,7 +165,7 @@ const AuthedApp = () => {
+     if (!currentUser || currentUser.role !== 'backer') return;
+     const papiDoc = players.find(p => p.role === 'investor');
+     if (papiDoc) {
+-      await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) + amount, lifetimeEarnings: (papiDoc.lifetimeEarnings || 0) + amount });
++      await addToPlayer(papiDoc.id, { investorBalance: amount, lifetimeEarnings: amount });
+       showNotification(`Added $${amount} to Papi.`);
+     }
+   };
+@@ -189,12 +202,7 @@ const AuthedApp = () => {
+         if (sessionId) await updateDoc(doc(db, "sessions", sessionId), sessionData);
+         else await addDoc(collection(db, "sessions"), sessionData);
+ 
+-        const me = players.find(p => p.id === currentUser.id) || currentUser;
+-        await updateDoc(doc(db, "players", currentUser.id), { 
+-            freelanceDebt: (me.freelanceDebt || 0) + cutAmount,
+-            isLive: false,
+-            currentCasino: null 
+-        });
++        await addToPlayer(currentUser.id, { freelanceDebt: cutAmount }, { isLive: false, currentCasino: null });
+         
+         localStorage.removeItem('activeShift');
+         setActiveShift(null);
+@@ -227,34 +235,35 @@ const AuthedApp = () => {
+         let effectiveTeamProfit = totalProfit; let papiCut = 0;
+         if (papiBacked) { papiCut = totalProfit * 0.50; effectiveTeamProfit = totalProfit * 0.50; }
+         const profitPerPlayer = round5(effectiveTeamProfit / selectedPlayerIds.length);
+-        const pSnap = await getDocs(collection(db, "players"));
+-        const livePlayers = pSnap.docs.map(d => ({ id: d.id, ...d.data() }));
++        const isTeam = selectedPlayerIds.length > 1 || papiBacked;
+ 
+         if (papiBacked) {
+-            const papi = livePlayers.find(p => p.role === 'investor');
+-            if (papi) updates.push(updateDoc(doc(db, "players", papi.id), { investorBalance: (papi.investorBalance || 0) + papiCut, lifetimeEarnings: (papi.lifetimeEarnings || 0) + papiCut }));
++            const papiId = players.find(p => p.role === 'investor')?.id;
++            if (papiId) updates.push(addToPlayer(papiId, { investorBalance: papiCut, lifetimeEarnings: papiCut }));
+         }
+ 
+-        players.forEach(pLocal => {
+-          if (!selectedPlayerIds.includes(pLocal.id)) return;
+-          const player = livePlayers.find(lp => lp.id === pLocal.id) || pLocal;
+-          let { heldCash, pinnedBankroll, tierScore, peakScore, lifetimeEarnings, lifetimeHours, currentTier } = player;
+-          tierScore = tierScore || 0; peakScore = peakScore || tierScore; lifetimeEarnings = lifetimeEarnings || 0; lifetimeHours = (lifetimeHours || 0) + duration;
+-          
+-          if (selectedPlayerIds.length > 1 || papiBacked) {
+-            if (player.id === cashHolderId) { heldCash += totalProfit; pinnedBankroll += (totalProfit - profitPerPlayer); } 
+-            else { pinnedBankroll += profitPerPlayer; }
+-          } else { heldCash += profitPerPlayer; }
+-
+-          if (selectedPlayerIds.length > 1 || papiBacked) { 
+-              lifetimeEarnings += profitPerPlayer; 
+-              if (player.id === cashHolderId) tierScore += profitPerPlayer; 
+-          } else { 
+-              lifetimeEarnings += profitPerPlayer; tierScore += profitPerPlayer; 
++        // Race-safe: every balance moves as an atomic delta. peakScore and
++        // currentTier are derived inside a transaction from a fresh read.
++        selectedPlayerIds.forEach(pid => {
++          const isCashHolder = pid === cashHolderId;
++          const deltas = { lifetimeEarnings: profitPerPlayer, lifetimeHours: duration };
++          let tierDelta = 0;
++          if (isTeam) {
++            if (isCashHolder) { deltas.heldCash = totalProfit; deltas.pinnedBankroll = totalProfit - profitPerPlayer; tierDelta = profitPerPlayer; }
++            else { deltas.pinnedBankroll = profitPerPlayer; }
++          } else {
++            deltas.heldCash = profitPerPlayer; tierDelta = profitPerPlayer;
+           }
+-
+-          if (tierScore > peakScore) peakScore = tierScore;
+-          updates.push(updateDoc(doc(db, "players", player.id), { heldCash, pinnedBankroll, tierScore, peakScore, lifetimeEarnings, lifetimeHours, currentTier: getTierDetails(peakScore, currentTier).level }));
++          deltas.tierScore = tierDelta;
++          updates.push(runTransaction(db, async (t) => {
++            const ref = doc(db, "players", pid);
++            const d = (await t.get(ref)).data() || {};
++            const newTier = (d.tierScore || 0) + tierDelta;
++            const newPeak = Math.max(d.peakScore || d.tierScore || 0, newTier);
++            const data = { peakScore: newPeak, currentTier: getTierDetails(newPeak, d.currentTier).level };
++            for (const [k, v] of Object.entries(deltas)) data[k] = increment(v);
++            t.update(ref, data);
++          }));
+         });
+     }
+ 
+@@ -287,32 +296,29 @@ const AuthedApp = () => {
+     const sessionDoc = sessions.find(s => s.id === sessionId);
+     if (!sessionDoc || sessionDoc.isLegacy) return;
+     if (sessionDoc.type === 'freelance') {
+-        const playerDoc = await getDoc(doc(db, "players", sessionDoc.playersInvolved[0]));
+-        const currentTab = playerDoc.data().freelanceDebt || 0;
+-        await updateDoc(playerDoc.ref, { freelanceDebt: currentTab - sessionDoc.backerCut });
++        await addToPlayer(sessionDoc.playersInvolved[0], { freelanceDebt: -(sessionDoc.backerCut || 0) });
+         return;
+     }
++    const updates = [];
+     if (sessionDoc.papiBacked) {
+         const papiCut = sessionDoc.totalProfit * 0.50;
+         const papiDoc = (await getDocs(query(collection(db, "players"), where("role", "==", "investor")))).docs[0];
+-        if (papiDoc) await updateDoc(papiDoc.ref, { investorBalance: (papiDoc.data().investorBalance || 0) - papiCut, lifetimeEarnings: (papiDoc.data().lifetimeEarnings || 0) - papiCut });
++        if (papiDoc) updates.push(addToPlayer(papiDoc.id, { investorBalance: -papiCut, lifetimeEarnings: -papiCut }));
+     }
+     const effectiveProfit = sessionDoc.papiBacked ? sessionDoc.totalProfit * 0.50 : sessionDoc.totalProfit;
+     const profitPerPlayer = round5(effectiveProfit / sessionDoc.playersInvolved.length);
+-    const livePlayers = (await getDocs(collection(db, "players"))).docs.map(d => ({ id: d.id, ...d.data() }));
+-    const updates = [];
++    const isTeam = sessionDoc.type === 'team' || sessionDoc.papiBacked;
++    // Exact inverse of the apply deltas above, as atomic increments.
++    // peakScore is a high-water mark and is intentionally never reverted.
+     sessionDoc.playersInvolved.forEach(pid => {
+-        const player = livePlayers.find(p => p.id === pid);
+-        if (!player) return; 
+-        let { heldCash, pinnedBankroll, tierScore, lifetimeEarnings, lifetimeHours } = player;
+-        lifetimeHours -= sessionDoc.duration;
+-        if (sessionDoc.type === 'team' || sessionDoc.papiBacked) {
+-            if (pid === sessionDoc.cashHolderId) { heldCash -= sessionDoc.totalProfit; pinnedBankroll -= (sessionDoc.totalProfit - profitPerPlayer); } 
+-            else { pinnedBankroll -= profitPerPlayer; }
+-        } else { heldCash -= profitPerPlayer; }
+-        lifetimeEarnings -= profitPerPlayer;
+-        if (sessionDoc.type === 'team' || sessionDoc.papiBacked) { if (pid === sessionDoc.cashHolderId) tierScore -= profitPerPlayer; } else { tierScore -= profitPerPlayer; }
+-        updates.push(updateDoc(doc(db, "players", pid), { heldCash, pinnedBankroll, tierScore, lifetimeEarnings, lifetimeHours }));
++        const deltas = { lifetimeEarnings: -profitPerPlayer, lifetimeHours: -sessionDoc.duration, tierScore: 0 };
++        if (isTeam) {
++            if (pid === sessionDoc.cashHolderId) { deltas.heldCash = -sessionDoc.totalProfit; deltas.pinnedBankroll = -(sessionDoc.totalProfit - profitPerPlayer); deltas.tierScore = -profitPerPlayer; }
++            else { deltas.pinnedBankroll = -profitPerPlayer; }
++        } else {
++            deltas.heldCash = -profitPerPlayer; deltas.tierScore = -profitPerPlayer;
++        }
++        updates.push(addToPlayer(pid, deltas));
+     });
+     await Promise.all(updates);
+   };
+@@ -337,13 +343,26 @@ const AuthedApp = () => {
+     const winnerDoc = players.find(p => p.id === winnerId);
+     let logData = { winnerId, amount, winnerPocket: 0, pinInc: 0, activePlayerIds, timestamp: serverTimestamp() };
+     if (winnerDoc.role !== 'backer' && winnerDoc.role !== 'investor') {
+-        const currentSurplus = winnerDoc.heldCash - winnerDoc.pinnedBankroll;
+-        const makeup = currentSurplus < 0 ? Math.abs(currentSurplus) : 0;
+-        let winnerPocket = 0; let pinInc = 0;
+-        if ((amount - makeup) > 0) { const profit = (amount - makeup); winnerPocket = round5(profit * 0.50); pinInc = profit - winnerPocket; }
++        // Race-safe: makeup is computed from a fresh read inside the transaction.
++        const { winnerPocket, pinInc } = await runTransaction(db, async (t) => {
++            const ref = doc(db, "players", winnerId);
++            const d = (await t.get(ref)).data() || {};
++            const currentSurplus = (d.heldCash || 0) - (d.pinnedBankroll || 0);
++            const makeup = currentSurplus < 0 ? Math.abs(currentSurplus) : 0;
++            let winnerPocket = 0; let pinInc = 0;
++            if ((amount - makeup) > 0) { const profit = (amount - makeup); winnerPocket = round5(profit * 0.50); pinInc = profit - winnerPocket; }
++            const newTier = (d.tierScore || 0) + amount; const newPeak = Math.max((d.peakScore || 0), newTier);
++            t.update(ref, {
++                heldCash: increment(amount - winnerPocket),
++                pinnedBankroll: increment(pinInc),
++                tierScore: increment(amount),
++                lifetimeEarnings: increment(winnerPocket),
++                peakScore: newPeak,
++                currentTier: getTierDetails(newPeak, d.currentTier).level,
++            });
++            return { winnerPocket, pinInc };
++        });
+         logData.winnerPocket = winnerPocket; logData.pinInc = pinInc;
+-        const newTier = (winnerDoc.tierScore || 0) + amount; const newPeak = Math.max((winnerDoc.peakScore || 0), newTier);
+-        await updateDoc(doc(db, "players", winnerId), { heldCash: winnerDoc.heldCash + (amount - winnerPocket), pinnedBankroll: winnerDoc.pinnedBankroll + pinInc, tierScore: newTier, peakScore: newPeak, lifetimeEarnings: (winnerDoc.lifetimeEarnings || 0) + winnerPocket, currentTier: getTierDetails(newPeak, winnerDoc.currentTier).level });
+     }
+     const teamPayRef = await addDoc(collection(db, "teamPays"), logData);
+     const batch = writeBatch(db);
+@@ -353,15 +372,14 @@ const AuthedApp = () => {
+ 
+   const handleAcknowledgeAction = async (action) => {
+       if (!currentUser) return;
+-      const me = (await getDocs(collection(db, "players"))).docs.find(d => d.id === currentUser.id).data();
+-      await updateDoc(doc(db, "players", currentUser.id), { heldCash: me.heldCash - action.cashAmount, pinnedBankroll: me.pinnedBankroll - (action.cashAmount + action.bankrollAmount), lifetimeEarnings: (me.lifetimeEarnings || 0) + action.cashAmount });
++      await addToPlayer(currentUser.id, { heldCash: -action.cashAmount, pinnedBankroll: -(action.cashAmount + action.bankrollAmount), lifetimeEarnings: action.cashAmount });
+       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: action.cashAmount, method: "Team Pay Cut", timestamp: serverTimestamp() });
+       await deleteDoc(doc(db, "pendingActions", action.id)); showNotification("Confirmed.");
+   };
+ 
+   const handleSettleUp = async (playerCut, backerCut) => {
+       if(!currentUser) return;
+-      await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - playerCut, pinnedBankroll: currentUser.pinnedBankroll + backerCut });
++      await addToPlayer(currentUser.id, { heldCash: -playerCut, pinnedBankroll: backerCut });
+       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: playerCut, method: "Settle Up", timestamp: serverTimestamp() });
+       showNotification(`Settled! Took $${playerCut}`);
+       window.open(`https://wa.me/17787004641?text=${encodeURIComponent(`TEAM GHOST: Settle up claim for $${playerCut}.`)}`, '_blank');
+@@ -369,7 +387,7 @@ const AuthedApp = () => {
+   
+   const handleTransferToBacker = async (amount) => {
+       if (!currentUser) return;
+-      await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - amount, pinnedBankroll: currentUser.pinnedBankroll - amount });
++      await addToPlayer(currentUser.id, { heldCash: -amount, pinnedBankroll: -amount });
+       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: amount, method: "Transfer to Backer", timestamp: serverTimestamp() });
+       showNotification(`Transferred $${amount}`);
+   };
+@@ -378,14 +396,14 @@ const AuthedApp = () => {
+       if (!currentUser) return;
+       const papiDoc = players.find(p => p.role === 'investor');
+       if (!papiDoc) return;
+-      await updateDoc(doc(db, "players", papiDoc.id), { investorBalance: (papiDoc.investorBalance || 0) - amount });
++      await addToPlayer(papiDoc.id, { investorBalance: -amount });
+       await addDoc(collection(db, "withdrawals"), { playerId: papiDoc.id, amount: amount, method: "Transfer from Oliver", timestamp: serverTimestamp() });
+       showNotification(`Transferred $${amount} to Papi.`);
+   };
+ 
+   const handleClaimBonus = async (amount, weekId) => {
+       if (!currentUser) return;
+-      await updateDoc(doc(db, "players", currentUser.id), { heldCash: currentUser.heldCash - amount, pinnedBankroll: currentUser.pinnedBankroll - amount, lastBonusClaimDate: weekId });
++      await addToPlayer(currentUser.id, { heldCash: -amount, pinnedBankroll: -amount }, { lastBonusClaimDate: weekId });
+       await addDoc(collection(db, "withdrawals"), { playerId: currentUser.id, amount: amount, method: "Weekly Rebate Bonus", timestamp: serverTimestamp() });
+       showNotification(`Bonus Claimed!`);
+       window.open(`https://wa.me/17787004641?text=${encodeURIComponent(`TEAM GHOST: I claimed my weekly bonus of $${amount}.`)}`, '_blank');
