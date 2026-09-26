@@ -1,0 +1,410 @@
+diff --git a/firebase.json b/firebase.json
+index 340ed5b..d71b361 100644
+--- a/firebase.json
++++ b/firebase.json
+@@ -1,4 +1,7 @@
+ {
++  "firestore": {
++    "rules": "firestore.rules"
++  },
+   "hosting": {
+     "public": "build",
+     "ignore": [
+diff --git a/firestore.rules b/firestore.rules
+new file mode 100644
+index 0000000..3ab5c83
+--- /dev/null
++++ b/firestore.rules
+@@ -0,0 +1,14 @@
++rules_version = '2';
++
++// TEAM GHOST security rules.
++// Every read and write requires a signed-in team account (Firebase Auth).
++// There are no public reads: even the player list is only visible to the team.
++// Accounts are created in the app's one-time "claim your player" flow and
++// linked to a player document via the authUid field.
++service cloud.firestore {
++  match /databases/{database}/documents {
++    match /{document=**} {
++      allow read, write: if request.auth != null;
++    }
++  }
++}
+diff --git a/src/App.js b/src/App.js
+index efbffa5..1194df9 100644
+--- a/src/App.js
++++ b/src/App.js
+@@ -24,20 +24,24 @@ import ActiveShift from './components/ActiveShift';
+ import StartSessionModal from './components/StartSessionModal';
+ 
+ import { round5, getTierDetails, parseMoney } from './utils';
++import { AuthProvider, useAuth } from './auth';
+ 
+-const App = () => {
+-  const [currentUser, setCurrentUser] = useState(null);
++const AuthedApp = () => {
++  const { playerId, signOut } = useAuth();
+   const [viewingPlayer, setViewingPlayer] = useState(null);
+   const [players, setPlayers] = useState([]);
+   const [sessions, setSessions] = useState([]);
+   const [machineLogs, setMachineLogs] = useState([]);
+   const [withdrawals, setWithdrawals] = useState([]);
+   const [games, setGames] = useState([]); 
+-  const [view, setView] = useState('login'); 
++  const [view, setView] = useState('dashboard'); 
+   const [notification, setNotification] = useState(null);
+   const [pendingActions, setPendingActions] = useState([]);
+   const [editingSession, setEditingSession] = useState(null);
+   const [showStartModal, setShowStartModal] = useState(false);
++
++  // The logged-in player, resolved from the auth account's linked player doc.
++  const currentUser = players.find(p => p.id === playerId) || null;
+   
+   const [activeShift, setActiveShift] = useState(() => {
+       const saved = localStorage.getItem('activeShift');
+@@ -79,8 +83,6 @@ const App = () => {
+     return () => { unsubWithdrawals(); unsubPending(); };
+   }, [currentUser, viewingPlayer]);
+ 
+-  const sortedPlayers = useMemo(() => [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0)), [players]);
+-
+   const casinoOptions = useMemo(() => {
+     const counts = {};
+     sessions.forEach(s => {
+@@ -93,8 +95,7 @@ const App = () => {
+     return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+   }, [sessions, currentUser]);
+ 
+-  const handleLogin = (player) => { setCurrentUser(player); setView('dashboard'); };
+-  const handleLogout = () => { setCurrentUser(null); setViewingPlayer(null); setView('login'); setPendingActions([]); };
++  const handleLogout = () => { setViewingPlayer(null); setView('dashboard'); setPendingActions([]); signOut(); };
+   const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
+   const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
+   const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
+@@ -411,7 +412,6 @@ const App = () => {
+     return <PlayerDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onCashout={handleSettleUp} onTransfer={handleTransferToBacker} onClaimBonus={handleClaimBonus} onSettleFreelanceTab={handleSettleFreelanceTab} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} setView={setView} />;
+   };
+ 
+-  if (view === 'login') return <LoginView players={sortedPlayers} sessions={sessions} onLogin={handleLogin} />;
+   if (pendingActions.length > 0) return <PendingActionModal action={pendingActions[0]} onConfirm={handleAcknowledgeAction} />;
+   
+   if (view === 'spectator' && viewingPlayer) {
+@@ -464,4 +464,47 @@ const App = () => {
+   );
+ };
+ 
+-export default App;
+\ No newline at end of file
++/**
++ * Gate: nobody sees or touches any data without a signed-in account.
++ * - Still checking the session -> spinner.
++ * - No session -> sign in / claim screen.
++ * - Session but no linked player -> explain + offer sign out (rare; e.g. link removed).
++ * - Otherwise -> the app. Subscriptions only start here, so unauthenticated
++ *   devices never even attempt a Firestore read.
++ */
++const App = () => (
++  <AuthProvider>
++    <AuthGate />
++  </AuthProvider>
++);
++
++const AuthGate = () => {
++  const { user, playerId, loading, signOut } = useAuth();
++
++  if (loading) {
++    return (
++      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
++        <p className="text-gray-400">Loading...</p>
++      </div>
++    );
++  }
++  if (!user) return <LoginView />;
++  if (!playerId) {
++    return (
++      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
++        <h1 className="text-xl font-bold text-emerald-400 mb-2">TEAM GHOST</h1>
++        <p className="text-gray-400 text-sm mb-6 text-center">
++          This account isn't linked to a player yet.<br />Ask Casey to link it, then sign in again.
++        </p>
++        <button
++          onClick={signOut}
++          className="p-3 rounded-xl bg-gray-800 text-white font-bold"
++        >
++          Sign Out
++        </button>
++      </div>
++    );
++  }
++  return <AuthedApp />;
++};
++export default App;
+diff --git a/src/auth.js b/src/auth.js
+new file mode 100644
+index 0000000..7e0403c
+--- /dev/null
++++ b/src/auth.js
+@@ -0,0 +1,81 @@
++import React, { createContext, useContext, useEffect, useState } from 'react';
++import { auth, db } from './firebase';
++import {
++  createUserWithEmailAndPassword,
++  signInWithEmailAndPassword,
++  signOut as fbSignOut,
++  onAuthStateChanged,
++} from 'firebase/auth';
++import { collection, getDocs, updateDoc } from 'firebase/firestore';
++
++const AuthContext = createContext(null);
++export const useAuth = () => useContext(AuthContext);
++
++/**
++ * Owns the Firebase Auth session and links it to a player document.
++ * A player is linked once, the first time they claim their name.
++ * The session persists on the device, so day-to-day the app just opens.
++ */
++export const AuthProvider = ({ children }) => {
++  const [user, setUser] = useState(null);
++  const [playerId, setPlayerId] = useState(null);
++  const [loading, setLoading] = useState(true);
++
++  useEffect(() => {
++    const unsub = onAuthStateChanged(auth, async (u) => {
++      setUser(u);
++      if (u) {
++        try {
++          const snap = await getDocs(collection(db, 'players'));
++          const match = snap.docs.find((d) => d.data().authUid === u.uid);
++          setPlayerId(match ? match.id : null);
++        } catch (e) {
++          setPlayerId(null);
++        }
++      } else {
++        setPlayerId(null);
++      }
++      setLoading(false);
++    });
++    return unsub;
++  }, []);
++
++  const signIn = (email, password) =>
++    signInWithEmailAndPassword(auth, email.trim(), password);
++
++  /**
++   * First-time setup: create the auth account, then link it to the
++   * player whose name matches. Cleans up the account if linking fails
++   * so nobody ends up with an orphan login.
++   */
++  const claimPlayer = async (playerName, email, password) => {
++    const cleanEmail = email.trim();
++    const norm = playerName.trim().toLowerCase();
++    const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
++    try {
++      const snap = await getDocs(collection(db, 'players'));
++      const matches = snap.docs.filter(
++        (d) => (d.data().name || '').trim().toLowerCase() === norm
++      );
++      if (matches.length === 0) throw new Error('NO_PLAYER');
++      if (matches.length > 1) throw new Error('AMBIGUOUS_PLAYER');
++      const pdoc = matches[0];
++      if (pdoc.data().authUid) throw new Error('ALREADY_CLAIMED');
++      await updateDoc(pdoc.ref, { authUid: cred.user.uid, email: cleanEmail });
++      setPlayerId(pdoc.id);
++      return pdoc.id;
++    } catch (e) {
++      // Don't leave a login that isn't linked to anyone.
++      try { await cred.user.delete(); } catch (delErr) { /* already signed in; harmless */ }
++      throw e;
++    }
++  };
++
++  const signOut = () => fbSignOut(auth);
++
++  return (
++    <AuthContext.Provider value={{ user, playerId, loading, signIn, claimPlayer, signOut }}>
++      {children}
++    </AuthContext.Provider>
++  );
++};
+diff --git a/src/components/LoginView.js b/src/components/LoginView.js
+index 801ee3f..d68f195 100644
+--- a/src/components/LoginView.js
++++ b/src/components/LoginView.js
+@@ -1,38 +1,121 @@
+-import React from 'react';
+-import { getTierDetails } from '../utils';
++import React, { useState } from 'react';
++import { useAuth } from '../auth';
+ 
+-const LoginView = ({ players, sessions, onLogin }) => {
+-    const sortedPlayers = [...players].sort((a, b) => {
+-        if (a.role === 'backer') return -1; if (b.role === 'backer') return 1;
+-        if (a.role === 'investor') return -1; if (b.role === 'investor') return 1;
+-        const scoreA = parseFloat(a.peakScore) || parseFloat(a.tierScore) || 0;
+-        const scoreB = parseFloat(b.peakScore) || parseFloat(b.tierScore) || 0;
+-        const tierA = getTierDetails(scoreA).level; const tierB = getTierDetails(scoreB).level;
+-        return tierB !== tierA ? tierB - tierA : scoreB - scoreA;
+-    });
++const friendlyError = (err) => {
++  if (!err) return 'Something went wrong. Try again.';
++  if (err.message === 'NO_PLAYER')
++    return "No player found with that name. Check the spelling and try again.";
++  if (err.message === 'AMBIGUOUS_PLAYER')
++    return "More than one player matches that name. Ask Casey to sort it out.";
++  if (err.message === 'ALREADY_CLAIMED')
++    return "That player is already claimed. Sign in instead.";
++  switch (err.code) {
++    case 'auth/invalid-credential':
++    case 'auth/wrong-password':
++    case 'auth/user-not-found':
++      return 'Wrong email or password.';
++    case 'auth/email-already-in-use':
++      return 'That email already has an account. Sign in instead.';
++    case 'auth/weak-password':
++      return 'Password must be at least 6 characters.';
++    case 'auth/invalid-email':
++      return 'That email address looks invalid.';
++    case 'auth/too-many-requests':
++      return 'Too many attempts. Wait a bit and try again.';
++    case 'auth/network-request-failed':
++      return 'Network error. Check your connection and try again.';
++    default:
++      return 'Something went wrong. Try again.';
++  }
++};
++
++const LoginView = () => {
++  const { signIn, claimPlayer } = useAuth();
++  const [mode, setMode] = useState('signin'); // 'signin' | 'claim'
++  const [email, setEmail] = useState('');
++  const [password, setPassword] = useState('');
++  const [playerName, setPlayerName] = useState('');
++  const [error, setError] = useState(null);
++  const [busy, setBusy] = useState(false);
++
++  const submit = async (e) => {
++    e.preventDefault();
++    setError(null);
++    setBusy(true);
++    try {
++      if (mode === 'signin') {
++        await signIn(email, password);
++      } else {
++        await claimPlayer(playerName, email, password);
++      }
++    } catch (err) {
++      setError(friendlyError(err));
++    } finally {
++      setBusy(false);
++    }
++  };
+ 
+-    return (
+-        <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
+-            <h1 className="text-3xl font-bold text-emerald-400 mb-8 tracking-wider">TEAM GHOST</h1>
+-            <div className="flex flex-col gap-3 w-full max-w-md">
+-                {sortedPlayers.map(p => {
+-                    let style = "bg-gray-800 border-gray-700"; let tierName = "";
+-                    
+-                    if (p.role === 'backer') { style = "bg-red-900 text-white border-red-700"; tierName = "BACKER"; }
+-                    else if (p.role === 'investor') { style = "bg-purple-900 text-white border-purple-700"; tierName = "INVESTOR"; }
+-                    else { const tier = getTierDetails(p.peakScore || p.tierScore || p.lifetimeProfit); style = `${tier.color} ${tier.text} border-transparent`; tierName = tier.name.toUpperCase(); }
+-                    
+-                    return (
+-                        <button key={p.id} onClick={() => onLogin(p)} className={`p-4 rounded-xl border-2 font-bold text-lg shadow-lg flex justify-between items-center transition-transform active:scale-95 ${style}`}>
+-                            <span>{p.name}</span>
+-                            <div className="flex flex-col items-end">
+-                                <span className="text-xs opacity-80">{tierName}</span>
+-                            </div>
+-                        </button>
+-                    );
+-                })}
+-            </div>
+-        </div>
+-    );
++  const inputCls =
++    'w-full p-3 rounded-xl bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500';
++
++  return (
++    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
++      <h1 className="text-3xl font-bold text-emerald-400 mb-2 tracking-wider">TEAM GHOST</h1>
++      <p className="text-gray-400 text-sm mb-8">
++        {mode === 'signin' ? 'Sign in to your account.' : 'First time? Claim your player below.'}
++      </p>
++      <form onSubmit={submit} className="flex flex-col gap-3 w-full max-w-md">
++        {mode === 'claim' && (
++          <input
++            className={inputCls}
++            placeholder="Your player name (as shown to the team)"
++            value={playerName}
++            onChange={(e) => setPlayerName(e.target.value)}
++            autoComplete="nickname"
++            required
++          />
++        )}
++        <input
++          className={inputCls}
++          placeholder="Email"
++          type="email"
++          value={email}
++          onChange={(e) => setEmail(e.target.value)}
++          autoComplete="email"
++          required
++        />
++        <input
++          className={inputCls}
++          placeholder="Password"
++          type="password"
++          value={password}
++          onChange={(e) => setPassword(e.target.value)}
++          autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
++          required
++        />
++        {error && (
++          <div className="p-3 rounded-xl bg-red-900/40 border border-red-700 text-red-200 text-sm">
++            {error}
++          </div>
++        )}
++        <button
++          type="submit"
++          disabled={busy}
++          className="p-4 rounded-xl font-bold text-lg bg-emerald-600 text-white shadow-lg active:scale-95 disabled:opacity-50"
++        >
++          {busy ? 'Working...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
++        </button>
++      </form>
++      <button
++        onClick={() => { setMode(mode === 'signin' ? 'claim' : 'signin'); setError(null); }}
++        className="mt-6 text-sm text-gray-400 underline"
++      >
++        {mode === 'signin'
++          ? "Don't have an account yet? Claim your player."
++          : 'Already have an account? Sign in.'}
++      </button>
++    </div>
++  );
+ };
+-export default LoginView;
+\ No newline at end of file
++
++export default LoginView;
+diff --git a/src/firebase.js b/src/firebase.js
+index 31f2ab5..36678ef 100644
+--- a/src/firebase.js
++++ b/src/firebase.js
+@@ -1,5 +1,6 @@
+ import { initializeApp } from "firebase/app";
+ import { getFirestore } from "firebase/firestore";
++import { getAuth } from "firebase/auth";
+ 
+ // --- PASTE YOUR KEYS INSIDE THESE CURLY BRACKETS ---
+ const firebaseConfig = {
+@@ -16,5 +17,6 @@ const firebaseConfig = {
+ // Initialize Firebase
+ const app = initializeApp(firebaseConfig);
+ const db = getFirestore(app);
++const auth = getAuth(app);
+ 
+-export { db };
+\ No newline at end of file
++export { db, auth };

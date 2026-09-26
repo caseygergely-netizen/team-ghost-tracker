@@ -24,20 +24,24 @@ import ActiveShift from './components/ActiveShift';
 import StartSessionModal from './components/StartSessionModal';
 
 import { round5, getTierDetails, parseMoney } from './utils';
+import { AuthProvider, useAuth } from './auth';
 
-const App = () => {
-  const [currentUser, setCurrentUser] = useState(null);
+const AuthedApp = () => {
+  const { playerId, signOut } = useAuth();
   const [viewingPlayer, setViewingPlayer] = useState(null);
   const [players, setPlayers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [machineLogs, setMachineLogs] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
   const [games, setGames] = useState([]); 
-  const [view, setView] = useState('login'); 
+  const [view, setView] = useState('dashboard'); 
   const [notification, setNotification] = useState(null);
   const [pendingActions, setPendingActions] = useState([]);
   const [editingSession, setEditingSession] = useState(null);
   const [showStartModal, setShowStartModal] = useState(false);
+
+  // The logged-in player, resolved from the auth account's linked player doc.
+  const currentUser = players.find(p => p.id === playerId) || null;
   
   const [activeShift, setActiveShift] = useState(() => {
       const saved = localStorage.getItem('activeShift');
@@ -79,8 +83,6 @@ const App = () => {
     return () => { unsubWithdrawals(); unsubPending(); };
   }, [currentUser, viewingPlayer]);
 
-  const sortedPlayers = useMemo(() => [...players].sort((a, b) => (b.tierScore || 0) - (a.tierScore || 0)), [players]);
-
   const casinoOptions = useMemo(() => {
     const counts = {};
     sessions.forEach(s => {
@@ -93,8 +95,7 @@ const App = () => {
     return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   }, [sessions, currentUser]);
 
-  const handleLogin = (player) => { setCurrentUser(player); setView('dashboard'); };
-  const handleLogout = () => { setCurrentUser(null); setViewingPlayer(null); setView('login'); setPendingActions([]); };
+  const handleLogout = () => { setViewingPlayer(null); setView('dashboard'); setPendingActions([]); signOut(); };
   const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
   const handleViewPlayer = (player) => { setViewingPlayer(player); setView('spectator'); };
   const handleBackToTeam = () => { setViewingPlayer(null); setView('teamRoster'); };
@@ -307,7 +308,7 @@ const App = () => {
         lifetimeHours -= sessionDoc.duration;
         if (sessionDoc.type === 'team' || sessionDoc.papiBacked) {
             if (pid === sessionDoc.cashHolderId) { heldCash -= sessionDoc.totalProfit; pinnedBankroll -= (sessionDoc.totalProfit - profitPerPlayer); } 
-            else { pinnedBankroll += profitPerPlayer; }
+            else { pinnedBankroll -= profitPerPlayer; }
         } else { heldCash -= profitPerPlayer; }
         lifetimeEarnings -= profitPerPlayer;
         if (sessionDoc.type === 'team' || sessionDoc.papiBacked) { if (pid === sessionDoc.cashHolderId) tierScore -= profitPerPlayer; } else { tierScore -= profitPerPlayer; }
@@ -411,7 +412,6 @@ const App = () => {
     return <PlayerDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onCashout={handleSettleUp} onTransfer={handleTransferToBacker} onClaimBonus={handleClaimBonus} onSettleFreelanceTab={handleSettleFreelanceTab} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} setView={setView} />;
   };
 
-  if (view === 'login') return <LoginView players={sortedPlayers} sessions={sessions} onLogin={handleLogin} />;
   if (pendingActions.length > 0) return <PendingActionModal action={pendingActions[0]} onConfirm={handleAcknowledgeAction} />;
   
   if (view === 'spectator' && viewingPlayer) {
@@ -464,4 +464,47 @@ const App = () => {
   );
 };
 
+/**
+ * Gate: nobody sees or touches any data without a signed-in account.
+ * - Still checking the session -> spinner.
+ * - No session -> sign in / claim screen.
+ * - Session but no linked player -> explain + offer sign out (rare; e.g. link removed).
+ * - Otherwise -> the app. Subscriptions only start here, so unauthenticated
+ *   devices never even attempt a Firestore read.
+ */
+const App = () => (
+  <AuthProvider>
+    <AuthGate />
+  </AuthProvider>
+);
+
+const AuthGate = () => {
+  const { user, playerId, loading, signOut } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    );
+  }
+  if (!user) return <LoginView />;
+  if (!playerId) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
+        <h1 className="text-xl font-bold text-emerald-400 mb-2">TEAM GHOST</h1>
+        <p className="text-gray-400 text-sm mb-6 text-center">
+          This account isn't linked to a player yet.<br />Ask Casey to link it, then sign in again.
+        </p>
+        <button
+          onClick={signOut}
+          className="p-3 rounded-xl bg-gray-800 text-white font-bold"
+        >
+          Sign Out
+        </button>
+      </div>
+    );
+  }
+  return <AuthedApp />;
+};
 export default App;
