@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 // 1. ADDED Brush to the recharts import
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Brush } from 'recharts';
 import { 
-  CheckCircle, ArrowRightLeft, DollarSign, History, Trash2, Edit2, BookOpen, Activity, Play, BarChart2, Users, Gift, Briefcase, TrendingUp, Clock, Eye, EyeOff, Shield 
+  ArrowRightLeft, Trash2, Edit2, Activity, Play, Gift, Briefcase, TrendingUp, Clock, Eye, EyeOff, Shield 
 } from 'lucide-react';
 import { getTierDetails, round5, getPreviousWeekRange } from '../utils';
 
@@ -12,7 +12,6 @@ const PlayerDashboard = ({
   onEditSession, onDeleteSession, onDeleteWithdrawal, setView, backingPaused
 }) => {
   
-  const [showSettleModal, setShowSettleModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferAmount, setTransferAmount] = useState('');
   const [showHiddenStats, setShowHiddenStats] = useState(false);
@@ -29,7 +28,6 @@ const PlayerDashboard = ({
   
   const tier = getTierDetails(myStats.peakScore || myStats.tierScore || myStats.lifetimeProfit, myStats.currentTier);
   const playerShare = round5(surplus * tier.playerKeep);
-  const backerShare = surplus - playerShare;
 
   let statusLabel = surplus > 0 ? "Current Profit" : (surplus < 0 ? "Current Makeup" : "Current Status");
 
