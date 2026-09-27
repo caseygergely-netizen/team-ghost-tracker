@@ -21,7 +21,8 @@ const PlayerAdmin = ({ players }) => {
           heldCash: parseFloat(editForm.heldCash) || 0,
           pinnedBankroll: parseFloat(editForm.pinnedBankroll) || 0,
           currentTier: parseInt(editForm.currentTier) || 0,
-          investorBalance: parseFloat(editForm.investorBalance) || 0
+          investorBalance: parseFloat(editForm.investorBalance) || 0,
+          freelanceCutPercent: isNaN(parseFloat(editForm.freelanceCutPercent)) ? 25 : parseFloat(editForm.freelanceCutPercent)
       };
       try {
           await updateDoc(doc(db, "players", editingId), cleanData);
@@ -93,6 +94,7 @@ const PlayerAdmin = ({ players }) => {
                                     <div><label className="text-xs text-gray-500 block mb-1">Hours</label><input type="number" className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-2 text-white" value={editForm.lifetimeHours} onChange={e => setEditForm({...editForm, lifetimeHours: e.target.value})} /></div>
                                     <div><label className="text-xs text-emerald-500/80 block mb-1">Held Cash</label><input type="number" className="w-full bg-gray-800 border border-emerald-500/50 rounded px-2 py-2 text-white" value={editForm.heldCash} onChange={e => setEditForm({...editForm, heldCash: e.target.value})} /></div>
                                     <div><label className="text-xs text-blue-400/80 block mb-1">Pinned</label><input type="number" className="w-full bg-gray-800 border border-blue-500/50 rounded px-2 py-2 text-white" value={editForm.pinnedBankroll} onChange={e => setEditForm({...editForm, pinnedBankroll: e.target.value})} /></div>
+                                    <div className="col-span-2"><label className="text-xs text-blue-300 block mb-1">Freelance Backer Cut % (0 = paused, blank = 25)</label><input type="number" className="w-full bg-gray-800 border border-blue-500/50 rounded px-2 py-2 text-white" value={editForm.freelanceCutPercent ?? 25} onChange={e => setEditForm({...editForm, freelanceCutPercent: e.target.value})} /></div>
                                   </>
                               )}
                           </div>

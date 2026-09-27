@@ -33,7 +33,9 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
           cashHolderId: currentUser.id,
           papiBacked: false,
           isFreelance: false,
-          backerPercent: 0,
+          // BACKING PAUSED: freelance cut comes from the player's own profile
+          // (freelanceCutPercent, default 25; 0 = paused). No per-session entry.
+          backerPercent: currentUser.freelanceCutPercent ?? 25,
           apPresent: false, 
           foundPlays: true // NEW: Default to true (assume you found plays)
       };
@@ -152,8 +154,7 @@ const SessionLogger = ({ players, currentUser, casinoOptions, activeShiftData, i
                 </div>
                 {formData.isFreelance && (
                     <div className="bg-blue-900/20 p-2 rounded border border-blue-500/50">
-                        <label className="block text-xs text-blue-300 mb-1">Backer Cut (%)</label>
-                        <input type="number" className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white font-bold" value={formData.backerPercent} onChange={e => handleChange('backerPercent', e.target.value)} />
+                        <div className="text-xs text-blue-300">Backer's cut: <span className="font-bold text-white">{formData.backerPercent}%</span>{parseFloat(formData.backerPercent) === 0 && <span className="text-gray-400"> (paused — you keep 100%)</span>}</div>
                     </div>
                 )}
                 <div className="grid grid-cols-2 gap-4">

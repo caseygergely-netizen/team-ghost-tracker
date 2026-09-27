@@ -27,6 +27,51 @@ import StartSessionModal from './components/StartSessionModal';
 import { round5, getTierDetails, parseMoney } from './utils';
 import { AuthProvider, useAuth } from './auth';
 
+// --- BACKING STATUS ---
+// Oliver's bankroll backing is PAUSED (indefinite). While true:
+// - the dashboard tucks tier / surplus / old cash+debt into a collapsed archive,
+// - freelance sessions use each player's own freelanceCutPercent (0 = paused),
+//   with no per-session backer-percent entry.
+// Flip to false if backing resumes.
+const BACKING_PAUSED = true;
+
+// --- EXPORT HELPERS (shared by the dashboard export and the unlinked reader export) ---
+const cleanSessionForExport = (s) => {
+  // Some imported/legacy sessions may lack a timestamp; fall back gracefully.
+  const tsSeconds = s.timestamp?.seconds || s.createdAt?.seconds || null;
+  const dateObj = tsSeconds ? new Date(tsSeconds * 1000) : new Date();
+  return {
+    id: s.id,
+    date: dateObj.toLocaleDateString(),
+    dayOfWeek: dateObj.toLocaleDateString('en-US', { weekday: 'long' }),
+    startTime: dateObj.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit' }),
+    casino: s.casino,
+    profit: s.totalProfit,
+    duration: s.duration,
+    type: s.type || 'team',
+    players: s.playersInvolved?.length || 1,
+    apPresent: s.apPresent || false,
+    foundPlays: s.foundPlays !== undefined ? s.foundPlays : true
+  };
+};
+
+const downloadExportJson = (cleanData) => {
+  const dataStr = JSON.stringify(cleanData, null, 2);
+
+  // Create a Blob (a file-like object)
+  const blob = new Blob([dataStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  // Create a hidden link, click it to trigger download, then clean up
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `team-ghost-export-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
 // --- RACE-SAFE BALANCE HELPER ---
 // Applies numeric deltas with Firestore's server-side increment(), so two
 // people acting at the same time can't overwrite each other's math.
@@ -126,39 +171,7 @@ const AuthedApp = () => {
 
   // --- UPDATED EXPORT: NOW WITH PRECISE TIMES (HH:MM) ---
   const handleExportData = () => {
-    const cleanData = sessions.map(s => {
-      // Some imported/legacy sessions may lack a timestamp; fall back gracefully.
-      const tsSeconds = s.timestamp?.seconds || s.createdAt?.seconds || null;
-      const dateObj = tsSeconds ? new Date(tsSeconds * 1000) : new Date();
-      return {
-        id: s.id,
-        date: dateObj.toLocaleDateString(),
-        dayOfWeek: dateObj.toLocaleDateString('en-US', { weekday: 'long' }),
-        startTime: dateObj.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit' }),
-        casino: s.casino,
-        profit: s.totalProfit,
-        duration: s.duration,
-        type: s.type || 'team', 
-        players: s.playersInvolved?.length || 1,
-        apPresent: s.apPresent || false,
-        foundPlays: s.foundPlays !== undefined ? s.foundPlays : true
-      };
-    });
-
-    const dataStr = JSON.stringify(cleanData, null, 2);
-    
-    // Create a Blob (a file-like object)
-    const blob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    
-    // Create a hidden link, click it to trigger download, then clean up
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `team-ghost-export-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadExportJson(sessions.map(cleanSessionForExport));
   };
 
   const handlePapiLegacyAdd = async (amount) => {
@@ -426,8 +439,8 @@ const AuthedApp = () => {
 
   const renderDashboard = () => {
     if (currentUser.role === 'investor') return <PapiDashboard players={players} sessions={sessions} withdrawals={withdrawals} />;
-    if (currentUser.role === 'backer') return <OliverDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onEndShift={handleEndShift} onTransferToPapi={handleTransferToPapi} onPapiLegacyAdd={handlePapiLegacyAdd} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onLogTeamSession={() => setView('logTeamSession')} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} onClaimBonus={handleClaimBonus} />;
-    return <PlayerDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onCashout={handleSettleUp} onTransfer={handleTransferToBacker} onClaimBonus={handleClaimBonus} onSettleFreelanceTab={handleSettleFreelanceTab} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} setView={setView} />;
+    if (currentUser.role === 'backer') return <OliverDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onEndShift={handleEndShift} onTransferToPapi={handleTransferToPapi} onPapiLegacyAdd={handlePapiLegacyAdd} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onLogTeamSession={() => setView('logTeamSession')} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} onClaimBonus={handleClaimBonus} backingPaused={BACKING_PAUSED} />;
+    return <PlayerDashboard currentUser={liveCurrentUser} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={!!activeShift} onStartShift={handleStartShiftClick} onTeamPay={() => setView('teamPay')} onLogMachine={() => setView('logMachine')} onCashout={handleSettleUp} onTransfer={handleTransferToBacker} onClaimBonus={handleClaimBonus} onSettleFreelanceTab={handleSettleFreelanceTab} onEditSession={(s) => { setEditingSession(s); setView('logSession'); }} onDeleteSession={handleDeleteSession} onDeleteWithdrawal={handleDeleteWithdrawal} setView={setView} backingPaused={BACKING_PAUSED} />;
   };
 
   if (pendingActions.length > 0) return <PendingActionModal action={pendingActions[0]} onConfirm={handleAcknowledgeAction} />;
@@ -462,7 +475,7 @@ const AuthedApp = () => {
                 <button onClick={handleBackToTeam} className="p-2 bg-gray-800 rounded-full"><ArrowLeft size={20}/></button>
                 <h1 className="text-xl font-bold">Viewing: {viewingPlayer.name}</h1>
             </header>
-             <PlayerDashboard currentUser={liveCurrentUser} viewingUser={viewingPlayer} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={false} onStartShift={() => {}} onTeamPay={() => {}} onLogMachine={() => {}} onCashout={() => {}} onTransfer={() => {}} onClaimBonus={() => {}} onEditSession={() => {}} onDeleteSession={() => {}} onDeleteWithdrawal={() => {}} setView={() => {}} />
+             <PlayerDashboard currentUser={liveCurrentUser} viewingUser={viewingPlayer} players={players} sessions={sessions} withdrawals={withdrawals} isShiftActive={false} onStartShift={() => {}} onTeamPay={() => {}} onLogMachine={() => {}} onCashout={() => {}} onTransfer={() => {}} onClaimBonus={() => {}} onEditSession={() => {}} onDeleteSession={() => {}} onDeleteWithdrawal={() => {}} setView={() => {}} backingPaused={BACKING_PAUSED} />
         </div>
       );
   }
@@ -500,7 +513,7 @@ const AuthedApp = () => {
       {activeShift && !['logSession', 'logTeamSession', 'teamPay', 'logMachine', 'playInfo'].includes(view) && (
         <ActiveShift shift={activeShift} onEnd={handleEndShift} />
       )}
-      {showStartModal && <StartSessionModal casinoOptions={casinoOptions} onConfirm={handleConfirmStartShift} onCancel={() => setShowStartModal(false)} />}
+      {showStartModal && <StartSessionModal casinoOptions={casinoOptions} defaultBackerPercent={liveCurrentUser?.freelanceCutPercent ?? 25} onConfirm={handleConfirmStartShift} onCancel={() => setShowStartModal(false)} />}
     </div>
   );
 };
@@ -531,12 +544,29 @@ const AuthGate = () => {
   }
   if (!user) return <LoginView />;
   if (!playerId) {
+    // Reader accounts (not linked to a player) can still export session data
+    // for automated analysis. Firestore rules already grant any signed-in user
+    // full read access, so this exposes nothing new.
+    const handleUnlinkedExport = async () => {
+      try {
+        const snap = await getDocs(collection(db, "sessions"));
+        downloadExportJson(snap.docs.map(d => cleanSessionForExport({ id: d.id, ...d.data() })));
+      } catch (e) {
+        alert("Export failed: " + e.message);
+      }
+    };
     return (
       <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
         <h1 className="text-xl font-bold text-emerald-400 mb-2">TEAM GHOST</h1>
         <p className="text-gray-400 text-sm mb-6 text-center">
           This account isn't linked to a player yet.<br />Ask Casey to link it, then sign in again.
         </p>
+        <button
+          onClick={handleUnlinkedExport}
+          className="p-3 rounded-xl bg-blue-900/50 text-blue-300 font-bold text-sm mb-3"
+        >
+          Export Data
+        </button>
         <button
           onClick={signOut}
           className="p-3 rounded-xl bg-gray-800 text-white font-bold"

@@ -9,7 +9,7 @@ import { getTierDetails, round5, getPreviousWeekRange } from '../utils';
 const PlayerDashboard = ({ 
   currentUser, viewingUser, players, sessions, withdrawals, isShiftActive,
   onStartShift, onTeamPay, onLogMachine, onCashout, onTransfer, onClaimBonus, onSettleFreelanceTab,
-  onEditSession, onDeleteSession, onDeleteWithdrawal, setView 
+  onEditSession, onDeleteSession, onDeleteWithdrawal, setView, backingPaused
 }) => {
   
   const [showSettleModal, setShowSettleModal] = useState(false);
@@ -256,24 +256,53 @@ const PlayerDashboard = ({
         <div className="flex justify-between items-start relative z-10">
             <div>
                 <h2 className="text-2xl font-bold text-white">{myStats.name}</h2>
-                <div className="flex items-center gap-2 mt-1">
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${tier.color} ${tier.text}`}>
-                        {tier.name}
-                    </span>
-                </div>
+                {backingPaused ? (
+                    <div className="text-xs text-gray-500 mt-1">Backing paused</div>
+                ) : (
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${tier.color} ${tier.text}`}>
+                            {tier.name}
+                        </span>
+                    </div>
+                )}
             </div>
-            <div className="text-right">
-                <div className="text-xs text-gray-400">{statusLabel}</div>
-                <div className={`text-3xl font-bold ${surplus >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {surplus.toLocaleString()}
+            {!backingPaused && (
+                <div className="text-right">
+                    <div className="text-xs text-gray-400">{statusLabel}</div>
+                    <div className={`text-3xl font-bold ${surplus >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {surplus.toLocaleString()}
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mt-6 p-4 bg-black/20 rounded-lg relative z-10">
-            <div><div className="text-xs text-gray-400 mb-1">Old Held Cash</div><div className="text-xl font-mono text-emerald-300">${myStats.heldCash.toLocaleString()}</div></div>
-            <div><div className="text-xs text-gray-400 mb-1">Old Debt</div><div className="text-xl font-mono text-blue-300">${myStats.pinnedBankroll.toLocaleString()}</div></div>
-        </div>
+        {backingPaused ? (
+            <details className="mt-6 p-4 bg-black/20 rounded-lg relative z-10">
+                <summary className="text-sm text-gray-400 cursor-pointer select-none">Backing (paused) — old balances</summary>
+                <div className="mt-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${tier.color} ${tier.text}`}>
+                            {tier.name}
+                        </span>
+                        <div className="text-right">
+                            <div className="text-xs text-gray-400">{statusLabel}</div>
+                            <div className={`text-xl font-bold ${surplus >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {surplus.toLocaleString()}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 p-4 bg-black/20 rounded-lg">
+                        <div><div className="text-xs text-gray-400 mb-1">Old Held Cash</div><div className="text-xl font-mono text-emerald-300">${myStats.heldCash.toLocaleString()}</div></div>
+                        <div><div className="text-xs text-gray-400 mb-1">Old Debt</div><div className="text-xl font-mono text-blue-300">${myStats.pinnedBankroll.toLocaleString()}</div></div>
+                    </div>
+                </div>
+            </details>
+        ) : (
+            <div className="grid grid-cols-2 gap-4 mt-6 p-4 bg-black/20 rounded-lg relative z-10">
+                <div><div className="text-xs text-gray-400 mb-1">Old Held Cash</div><div className="text-xl font-mono text-emerald-300">${myStats.heldCash.toLocaleString()}</div></div>
+                <div><div className="text-xs text-gray-400 mb-1">Old Debt</div><div className="text-xl font-mono text-blue-300">${myStats.pinnedBankroll.toLocaleString()}</div></div>
+            </div>
+        )}
         
         {/* FREELANCE TAB */}
         <div className="mt-4 p-3 bg-gray-800/80 rounded border border-blue-500/30 flex justify-between items-center relative z-10">

@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Database, Trash2, Filter, BarChart, MapPin, Calendar, Info, X, TrendingUp } from 'lucide-react';
+import { Database, Trash2, Filter, BarChart, MapPin, Calendar, Info, X } from 'lucide-react';
 import { calculateSD } from '../utils'; // Ensure you have this helper or remove sd calculation if unused
-import { BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const MachineAnalytics = ({ logs, sessions, onDeleteLog }) => {
     const [viewMode, setViewMode] = useState('machine'); // 'machine' or 'session'

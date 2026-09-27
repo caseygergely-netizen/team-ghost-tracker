@@ -6,7 +6,7 @@ const OliverDashboard = ({
   currentUser, players, isShiftActive, sessions,
   onStartShift, onTransferToPapi, 
   onTeamPay, onLogMachine, onLogTeamSession, onPapiLegacyAdd,
-  onEditSession, onDeleteSession 
+  onEditSession, onDeleteSession, backingPaused
 }) => {
   const [transferAmount, setTransferAmount] = useState('');
   const [legacyAmount, setLegacyAmount] = useState('');
@@ -40,6 +40,11 @@ const OliverDashboard = ({
 
   return (
     <div className="space-y-8">
+      {backingPaused && (
+        <div className="bg-amber-900/20 border border-amber-500/40 rounded-xl p-4 text-sm text-amber-200">
+          Backing is paused — bankroll accounting below is archived, not live.
+        </div>
+      )}
       {/* SECTION A: BACKER CONTROLS */}
       <div className="bg-gray-800 border border-blue-500/30 rounded-xl p-6 shadow-xl">
         <h2 className="text-xl font-bold text-white mb-4 border-b border-gray-700 pb-2 flex items-center gap-2">

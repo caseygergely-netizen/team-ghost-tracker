@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { MapPin, Play, X, Briefcase } from 'lucide-react';
 
-const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
+const StartSessionModal = ({ casinoOptions, defaultBackerPercent, onConfirm, onCancel }) => {
   const [casino, setCasino] = useState('');
   const [showList, setShowList] = useState(false);
   
-  // FIXED: Default backer cut is now 0%
+  // BACKING PAUSED: freelance cut comes from the player's own profile
+  // (defaultBackerPercent, default 25; 0 = paused). No per-session entry.
   const [isFreelance, setIsFreelance] = useState(true);
-  const [backerPercent, setBackerPercent] = useState(0);
+  const [backerPercent] = useState(defaultBackerPercent ?? 25);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -73,8 +74,7 @@ const StartSessionModal = ({ casinoOptions, onConfirm, onCancel }) => {
               
               {isFreelance && (
                   <div className="pt-2 border-t border-gray-700">
-                      <label className="block text-xs text-blue-300 mb-1">Backer Cut (%)</label>
-                      <input type="number" className="w-full bg-gray-800 border border-blue-500/50 rounded p-2 text-white font-bold text-center" value={backerPercent} onChange={e => setBackerPercent(e.target.value)} />
+                      <div className="text-xs text-blue-300">Backer's cut: <span className="font-bold text-white">{backerPercent}%</span>{parseFloat(backerPercent) === 0 && <span className="text-gray-400"> (paused — you keep 100%)</span>}</div>
                   </div>
               )}
           </div>
