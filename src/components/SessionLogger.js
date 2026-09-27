@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Users, Clock, Calculator, MapPin, Calendar, Briefcase, Eye, CheckCircle } from 'lucide-react';
 import { parseMoney } from '../utils';
 
