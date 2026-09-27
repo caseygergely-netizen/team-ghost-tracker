@@ -27,7 +27,6 @@ const PlayerDashboard = ({
   const freelanceDebt = myStats.freelanceDebt || 0;
   
   const tier = getTierDetails(myStats.peakScore || myStats.tierScore || myStats.lifetimeProfit, myStats.currentTier);
-  const playerShare = round5(surplus * tier.playerKeep);
 
   let statusLabel = surplus > 0 ? "Current Profit" : (surplus < 0 ? "Current Makeup" : "Current Status");
 
